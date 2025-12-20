@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
 import os
+import re
+import glob
 import optuna
 import lightgbm as lgb
 import xgboost as xgb
@@ -13,7 +15,51 @@ from sklearn.base import BaseEstimator
 import warnings
 
 warnings.filterwarnings('ignore')
+import json
+import datetime
+import os
 
+def save_experiment(submission_df, cv_score, params_dict, description, folder='experiments'):
+    """
+    Sauvegarde la soumission ET la config associée.
+    
+    Args:
+        submission_df: Le DataFrame de soumission (ID, HOME, DRAW, AWAY)
+        cv_score: Ton score moyen de cross-validation (ex: 0.4813)
+        params_dict: Dictionnaire contenant tes hyperparamètres (lgb, xgb, cat...)
+        description: Une phrase courte pour décrire l'essai (ex: "V2 features sans selection")
+        folder: Dossier de sauvegarde
+    """
+    # Création du dossier si inexistant
+    os.makedirs(folder, exist_ok=True)
+    
+    # Timestamp pour rendre le nom unique
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Nom de base : score_date
+    # ex: 0.4813_20231220_234512
+    base_name = f"cv{cv_score:.4f}_{timestamp}"
+    
+    # 1. Sauvegarde du CSV
+    csv_filename = f"{folder}/sub_{base_name}.csv"
+    submission_df.to_csv(csv_filename, index=False)
+    
+    # 2. Sauvegarde de la Config (JSON)
+    config_filename = f"{folder}/conf_{base_name}.json"
+    
+    log_data = {
+        "timestamp": timestamp,
+        "cv_score": cv_score,
+        "description": description,
+        "parameters": params_dict
+    }
+    
+    with open(config_filename, 'w') as f:
+        json.dump(log_data, f, indent=4)
+        
+    print(f"\n[SUCCÈS] Expérience sauvegardée dans '{folder}/'")
+    print(f"📄 CSV: {csv_filename}")
+    print(f"⚙️ Config: {config_filename}")
 # =============================================================================
 # 1. CHARGEMENT ET PRÉPARATION DES DONNÉES
 # =============================================================================
@@ -233,10 +279,25 @@ eclf = VotingClassifier(
 )
 
 # Validation Score final
-#cv_scores = cross_val_score(eclf, X_train, y_train_cls, cv=5, scoring='accuracy')
-#print(f"Accuracy CV Moyenne : {cv_scores.mean():.5f} (+/- {cv_scores.std():.5f})")
+cv_scores = cross_val_score(eclf, X_train, y_train_cls, cv=5, scoring='accuracy')
+# --- E.1. ESTIMATION (Est-ce que je suis bon ?) ---
+print("--- ÉTAPE 1 : Validation Croisée (Simulation) ---")
+# Cela prend du temps, mais ça te dit la vérité sur ton niveau
+cv_scores = cross_val_score(eclf, X_train, y_train_cls, cv=5, scoring='accuracy', n_jobs=1)
+mon_score_estime = cv_scores.mean()
 
-# Entraînement sur tout le dataset
+print(f"📊 Score estimé sur 5 folds : {mon_score_estime:.4f}")
+
+# --- E.2. DÉCISION ---
+# Si le score est nul, on arrête tout pour ne pas perdre de temps
+if mon_score_estime < 0.475: # Par exemple, ton seuil mini
+    print("❌ Score trop bas. J'arrête là. Il faut changer les paramètres.")
+    exit() # On coupe le script
+else:
+    print("✅ Score validé ! On lance l'entraînement final pour la soumission.")
+
+# --- E.3. ENTRAÎNEMENT FINAL (Pour la soumission) ---
+print("--- ÉTAPE 2 : Entraînement Final (100% des données) ---")
 eclf.fit(X_train, y_train_cls)
 
 # --- F. Prédiction et Soumission ---
@@ -252,13 +313,60 @@ submission = pd.DataFrame({
     'AWAY_WINS': probs[:, 0]  # Proba classe 0
 })
 
-# Vérification (la somme doit faire 1)
-# submission[['HOME_WINS', 'DRAW', 'AWAY_WINS']].sum(axis=1)
+# --- GESTION DE LA SAUVEGARDE INTELLIGENTE ---
 
+# 1. On rassemble tous les paramètres utilisés pour ne rien oublier
+experiment_params = {
+    "lgb": params_lgb,
+    "xgb": params_xgb,
+    "cat": params_cat,
+    "feature_engineering": "V2 (Position Aware) - Full Features (No selection)", # Change ça à la main selon ce que tu testes
+    "stacking": False,
+    "voting": "Soft Voting"
+}
+
+# 2. Le score CV (Si tu l'as calculé via cross_val_score plus tôt, utilise la variable)
+# Si tu ne l'as pas calculé pour gagner du temps, mets une estimation ou 0
+current_cv_score = cv_scores.mean() # Remplace par la variable 'cv_scores.mean()' si dispo
+
+# 3. Appel magique
+save_experiment(
+    submission_df=submission,
+    cv_score=current_cv_score,
+    params_dict=experiment_params,
+    description="Test avec features V2 et params robustes anti-overfit"
+)
+# --- G. Conversion Binaire (Hard Voting) ---
+print("Conversion en prédictions binaires (0/1)...")
+cols_submit = ['HOME_WINS', 'DRAW', 'AWAY_WINS']
+# On trouve l'index de la valeur max pour chaque ligne
+max_indices = submission[cols_submit].values.argmax(axis=1)
+# On crée une matrice de zéros
+hard_preds = np.zeros(submission[cols_submit].shape, dtype=int)
+# On met des 1 là où la proba était maximale
+hard_preds[np.arange(len(submission)), max_indices] = 1
+# On remplace dans le DataFrame
+submission[cols_submit] = hard_preds
+
+# --- H. Sauvegarde avec Versioning Automatique ---
 # Création du dossier de soumission s'il n'existe pas
 os.makedirs('submission', exist_ok=True)
-submission_path = os.path.join('submission', 'submission_qrt_optimized.csv')
+
+# Détermination du numéro de version
+existing_files = glob.glob('submission/submission_V*.csv')
+version = 1
+if existing_files:
+    versions = []
+    for f in existing_files:
+        match = re.search(r'submission_V(\d+)\.csv', f)
+        if match:
+            versions.append(int(match.group(1)))
+    if versions:
+        version = max(versions) + 1
+
+filename = f'submission_V{version}.csv'
+submission_path = os.path.join('submission', filename)
 
 submission.to_csv(submission_path, index=False)
-print(f"Fichier '{submission_path}' généré avec succès.")
+print(f"Fichier binaire généré avec succès : '{submission_path}'")
 
