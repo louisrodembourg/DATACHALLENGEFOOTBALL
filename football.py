@@ -43,57 +43,71 @@ def load_data(base_path='data/'):
 # 2. FEATURE ENGINEERING (LE CŒUR DU SYSTÈME)
 # =============================================================================
 
-def aggregate_players(player_df, prefix):
-    """Agrège les stats des joueurs par ID de match."""
-    # On ne garde que les colonnes numériques pour l'agrégation
+def aggregate_players_by_position(player_df, prefix):
+    """
+    Agrège les stats en séparant par POSITION (G, D, M, F).
+    Cela capture la structure tactique de l'équipe.
+    """
+    # 1. On sépare les colonnes numériques et la position
     numeric_cols = player_df.select_dtypes(include=[np.number]).columns.tolist()
-    if 'ID' not in numeric_cols:
-        numeric_cols.append('ID')
-        
-    # Agrégation: Somme (impact total), Moyenne (niveau moyen), Ecart-type (hétérogénéité)
-    agg_df = player_df[numeric_cols].groupby('ID').agg(['sum', 'mean', 'std'])
+    if 'ID' not in numeric_cols: numeric_cols.append('ID')
     
-    # Aplatir le MultiIndex
-    agg_df.columns = [f'{prefix}_{col}_{stat}' for col, stat in agg_df.columns]
-    agg_df.reset_index(inplace=True)
-    return agg_df
+    # On garde ID et POSITION pour le pivot
+    cols_to_use = numeric_cols + ['POSITION']
+    
+    # 2. Pivot Table : C'est la magie. 
+    # On groupe par ID et POSITION, puis on calcule la moyenne (mean) et la somme (sum)
+    # On évite l'écart-type (std) ici pour ne pas exploser le nombre de colonnes (déjà x4 à cause des positions)
+    pivot_df = player_df[cols_to_use].groupby(['ID', 'POSITION']).agg(['mean', 'sum'])
+    
+    # 3. Aplatir le MultiIndex (ex: ('GOALS', 'mean') -> 'GOALS_mean')
+    pivot_df.columns = [f'{c[0]}_{c[1]}' for c in pivot_df.columns]
+    
+    # 4. Dé-empiler les positions (ex: une ligne par match, colonnes: DEFENDER_GOALS_mean, FORWARD_GOALS_mean...)
+    flat_df = pivot_df.unstack(level='POSITION')
+    
+    # 5. Aplatir à nouveau les noms de colonnes
+    flat_df.columns = [f'{prefix}_{pos}_{col}' for col, pos in flat_df.columns]
+    flat_df.reset_index(inplace=True)
+    
+    # 6. Gestion des valeurs manquantes (ex: si une équipe joue sans attaquants... improbable mais possible en data sale)
+    flat_df.fillna(0, inplace=True)
+    
+    return flat_df
 
-def build_features(team_home, team_away, player_home, player_away):
-    print("Construction des features (Agrégation & Différentiels)...")
+def build_features_v2(team_home, team_away, player_home, player_away):
+    print("Construction des features V2 (Position-Aware)...")
     
-    # 1. Agrégation des joueurs
-    p_home_agg = aggregate_players(player_home, 'P_HOME')
-    p_away_agg = aggregate_players(player_away, 'P_AWAY')
+    # 1. Agrégation fine par position
+    p_home_agg = aggregate_players_by_position(player_home, 'P_HOME')
+    p_away_agg = aggregate_players_by_position(player_away, 'P_AWAY')
     
     # 2. Merge Team + Players
     df = team_home.merge(team_away, on='ID', suffixes=('_HOME', '_AWAY'))
     df = df.merge(p_home_agg, on='ID', how='left')
     df = df.merge(p_away_agg, on='ID', how='left')
     
-    # 3. Création des Delta Features (Home - Away)
-    # C'est crucial pour le foot : on veut savoir si Home est MEILLEUR que Away
-    # On cherche les colonnes présentes dans HOME et AWAY (Team et Player aggrégés)
-    base_cols = set([c.replace('_HOME', '') for c in df.columns if c.endswith('_HOME')])
+    # 3. Delta Features (Uniquement sur les colonnes les plus importantes pour ne pas exploser la RAM)
+    # On se concentre sur les totaux d'équipe et les moyennes par position
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
     
-    for col in base_cols:
+    # On cherche les paires HOME/AWAY
+    base_features = set([c.replace('_HOME', '') for c in numeric_cols if '_HOME' in c])
+    
+    print(f"Création des deltas sur {len(base_features)} variables...")
+    for col in base_features:
         col_h = f"{col}_HOME"
         col_a = f"{col}_AWAY"
         if col_h in df.columns and col_a in df.columns:
-            # On ne calcule la différence que pour les colonnes numériques
-            if pd.api.types.is_numeric_dtype(df[col_h]) and pd.api.types.is_numeric_dtype(df[col_a]):
-                df[f'DELTA_{col}'] = df[col_h] - df[col_a]
+            df[f'DELTA_{col}'] = df[col_h] - df[col_a]
     
     # 4. Nettoyage
-    # On retire les colonnes non informatives pour le modèle
     drop_cols = ['LEAGUE_HOME', 'TEAM_NAME_HOME', 'LEAGUE_AWAY', 'TEAM_NAME_AWAY', 
-                 'LEAGUE', 'TEAM_NAME'] # Au cas où
+                 'LEAGUE', 'TEAM_NAME']
     df.drop(columns=[c for c in drop_cols if c in df.columns], inplace=True)
-    
-    # Remplir les NaN (générés par l'agrégation ou le merge)
     df.fillna(0, inplace=True)
     
     return df
-
 # =============================================================================
 # 3. OPTIMISATION HYPERPARAMÈTRES (OPTUNA)
 # =============================================================================
@@ -132,8 +146,8 @@ def objective_lgb(trial, X, y):
  xtest_h, xtest_a, xpt_h, xpt_a) = load_data()
 
 # --- B. Construction du Dataset ---
-X_train = build_features(xt_h, xt_a, xp_h, xp_a)
-X_test = build_features(xtest_h, xtest_a, xpt_h, xpt_a)
+X_train = build_features_v2(xt_h, xt_a, xp_h, xp_a)
+X_test = build_features_v2(xtest_h, xtest_a, xpt_h, xpt_a)
 
 # Alignement des colonnes (au cas où certaines manquent dans le test)
 X_train, X_test = X_train.align(X_test, join='inner', axis=1)
@@ -176,8 +190,49 @@ X_train['PRED_GOAL_DIFF'] = cross_val_predict(cast(BaseEstimator, regressor), X_
 # Feature 'PRED_GOAL_DIFF' pour le Test (via entraînement complet)
 regressor.fit(X_train.drop(columns=['PRED_GOAL_DIFF']), y_train_reg)
 X_test['PRED_GOAL_DIFF'] = regressor.predict(X_test)
+# =============================================================================
+# --- D. FEATURE SELECTION (LE NETTOYAGE CRITIQUE) ---
+# =============================================================================
+from sklearn.feature_selection import SelectFromModel
 
-# --- D. Optimisation (Optionnelle - Commentée pour exécution rapide) ---
+print("Démarrage de la sélection des features (Nettoyage du bruit)...")
+
+# 1. On utilise un LightGBM rapide pour juger l'importance des colonnes
+# On le configure pour être rapide (n_estimators=100) mais précis
+lgb_selector = lgb.LGBMClassifier(
+    n_estimators=100,
+    learning_rate=0.1,
+    num_leaves=31,
+    random_state=42,
+    n_jobs=-1,
+    verbose=-1
+)
+
+lgb_selector.fit(X_train, y_train_cls)
+
+# 2. On garde les features dont l'importance est supérieure à 1.25 fois la moyenne
+# C'est un seuil agressif pour virer les variables inutiles (bruit)
+model_selector = SelectFromModel(lgb_selector, prefit=True, threshold="1.25*mean")
+
+# 3. On sauvegarde les noms des colonnes avant transformation (pour info)
+original_cols = X_train.columns
+n_original = X_train.shape[1]
+
+# 4. Transformation des datasets
+X_train_selected = model_selector.transform(X_train)
+X_test_selected = model_selector.transform(X_test)
+
+# 5. On remplace les variables X_train / X_test par leurs versions nettoyées
+# Attention : transform renvoie un numpy array, on remet en DataFrame pour garder la propreté
+selected_mask = model_selector.get_support()
+selected_columns = original_cols[selected_mask]
+
+X_train = pd.DataFrame(X_train_selected, columns=selected_columns)
+X_test = pd.DataFrame(X_test_selected, columns=selected_columns)
+
+print(f"✅ Nettoyage terminé : Passage de {n_original} à {X_train.shape[1]} features.")
+print(f"Les features conservées sont les plus pertinentes pour la victoire.")
+# --- E. Optimisation (Optionnelle - Commentée pour exécution rapide) ---
 # study = optuna.create_study(direction='maximize')
 # study.optimize(lambda trial: objective_lgb(trial, X_train, y_train_cls), n_trials=50)
 # best_params_lgb = study.best_params

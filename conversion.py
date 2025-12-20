@@ -23,7 +23,7 @@ df[cols_submit] = hard_preds
 # 5. Sauvegarde le nouveau fichier "Strict"
 import os
 os.makedirs('submission', exist_ok=True)
-submission_path = os.path.join('submission', 'submission_qrt_strict_v2.csv')
+submission_path = os.path.join('submission', 'submission_qrt_binaireV2.csv')
 
 df.to_csv(submission_path, index=False)
 print(f"Fichier '{submission_path}' généré avec succès.")
