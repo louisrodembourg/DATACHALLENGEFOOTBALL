@@ -190,48 +190,7 @@ X_train['PRED_GOAL_DIFF'] = cross_val_predict(cast(BaseEstimator, regressor), X_
 # Feature 'PRED_GOAL_DIFF' pour le Test (via entraînement complet)
 regressor.fit(X_train.drop(columns=['PRED_GOAL_DIFF']), y_train_reg)
 X_test['PRED_GOAL_DIFF'] = regressor.predict(X_test)
-# =============================================================================
-# --- D. FEATURE SELECTION (LE NETTOYAGE CRITIQUE) ---
-# =============================================================================
-from sklearn.feature_selection import SelectFromModel
 
-print("Démarrage de la sélection des features (Nettoyage du bruit)...")
-
-# 1. On utilise un LightGBM rapide pour juger l'importance des colonnes
-# On le configure pour être rapide (n_estimators=100) mais précis
-lgb_selector = lgb.LGBMClassifier(
-    n_estimators=100,
-    learning_rate=0.1,
-    num_leaves=31,
-    random_state=42,
-    n_jobs=-1,
-    verbose=-1
-)
-
-lgb_selector.fit(X_train, y_train_cls)
-
-# 2. On garde les features dont l'importance est supérieure à 1.25 fois la moyenne
-# C'est un seuil agressif pour virer les variables inutiles (bruit)
-model_selector = SelectFromModel(lgb_selector, prefit=True, threshold="1.25*mean")
-
-# 3. On sauvegarde les noms des colonnes avant transformation (pour info)
-original_cols = X_train.columns
-n_original = X_train.shape[1]
-
-# 4. Transformation des datasets
-X_train_selected = model_selector.transform(X_train)
-X_test_selected = model_selector.transform(X_test)
-
-# 5. On remplace les variables X_train / X_test par leurs versions nettoyées
-# Attention : transform renvoie un numpy array, on remet en DataFrame pour garder la propreté
-selected_mask = model_selector.get_support()
-selected_columns = original_cols[selected_mask]
-
-X_train = pd.DataFrame(X_train_selected, columns=selected_columns)
-X_test = pd.DataFrame(X_test_selected, columns=selected_columns)
-
-print(f"✅ Nettoyage terminé : Passage de {n_original} à {X_train.shape[1]} features.")
-print(f"Les features conservées sont les plus pertinentes pour la victoire.")
 # --- E. Optimisation (Optionnelle - Commentée pour exécution rapide) ---
 # study = optuna.create_study(direction='maximize')
 # study.optimize(lambda trial: objective_lgb(trial, X_train, y_train_cls), n_trials=50)
@@ -240,18 +199,19 @@ print(f"Les features conservées sont les plus pertinentes pour la victoire.")
 
 # Paramètres solides par défaut (si on saute Optuna)
 params_lgb = {
-    'n_estimators': 2000, 'learning_rate': 0.03, 'num_leaves': 31, 
-    'colsample_bytree': 0.8, 'subsample': 0.8, 'random_state': 42,
+    'n_estimators': 2000, 'learning_rate': 0.03, 'num_leaves': 20, 
+    'colsample_bytree': 0.6, 'subsample': 0.8, 'random_state': 42,
     'n_jobs' :-1,'verbose': -1
 }
 params_xgb = {
-    'n_estimators': 2000, 'learning_rate': 0.03, 'max_depth': 6, 
+    'n_estimators': 2000, 'learning_rate': 0.03, 'max_depth': 5, 
     'colsample_bytree': 0.8, 'subsample': 0.8, 'random_state': 42,
     'eval_metric': 'mlogloss','tree_method':'hist','n_jobs': -1
 }
 params_cat = {
     'iterations': 2000, 'learning_rate': 0.03, 'depth': 6, 
-    'verbose': 0, 'random_state': 42,'thread_count': -1
+    'verbose': 0, 'random_state': 42,'thread_count': -1,
+    'rsm':0.6
 }
 
 # --- E. Modélisation Finale (Ensemble Voting) ---
