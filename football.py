@@ -15,7 +15,8 @@ import optuna
 from catboost import CatBoostClassifier, CatBoostRegressor
 from sklearn.model_selection import StratifiedKFold, KFold, cross_val_score, train_test_split, cross_val_predict
 from sklearn.preprocessing import LabelEncoder
-from sklearn.ensemble import VotingClassifier
+from sklearn.ensemble import VotingClassifier, StackingClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 from sklearn.base import BaseEstimator
 from sklearn.feature_selection import SelectFromModel
@@ -24,7 +25,7 @@ from sklearn.feature_selection import SelectFromModel
 warnings.filterwarnings('ignore')
 
 # =============================================================================
-# 1. UTILITAIRES & LOGGING (Ta demande spécifique)
+# 1. UTILITAIRES & LOGGING
 # =============================================================================
 
 def save_experiment(cv_score, params_dict, description, submission_df=None, folder='experiments'):
@@ -36,7 +37,7 @@ def save_experiment(cv_score, params_dict, description, submission_df=None, fold
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = f"cv{cv_score:.4f}_{timestamp}"
     
-    # 1. Sauvegarde de la Config (JSON) - TOUJOURS
+    # 1. Sauvegarde de la Config (JSON)
     config_filename = f"{folder}/conf_{base_name}.json"
     log_data = {
         "timestamp": timestamp,
@@ -140,7 +141,7 @@ def build_features_v2(team_home, team_away, player_home, player_away):
     return df
 
 # =============================================================================
-# 4. FONCTIONS OPTIMISATION (Stockées pour usage futur)
+# 4. FONCTIONS OPTIMISATION ((Non) utilisées dans le pipeline principal pour le moment)
 # =============================================================================
 
 def objective_lgb(trial, X, y):
@@ -229,33 +230,55 @@ if __name__ == "__main__":
     }
     
     # Description pour le log
-    run_description = "V2 Features - Full (No Selection) - Soft Voting - Params Anti-Overfit"
+    run_description = "V2 Features - Full (No Selection) - Stacking (LR meta) - Params Anti-Overfit"
     experiment_params = {
         "lgb": params_lgb, "xgb": params_xgb, "cat": params_cat,
+        "stacking": True,
+        "meta_learner": "LogisticRegression",
+        "meta_features": "OOF predict_proba + PRED_GOAL_DIFF",
         "desc": run_description
     }
 
-    # --- F. Validation Croisée (CRITIQUE) ---
-    print("\n--- ÉTAPE 1 : Validation Croisée (Estimation du Score) ---")
+    # --- F. Construction du Stacking (Remplacement du Voting) ---
+    print("\n--- ÉTAPE 1 : Configuration du Stacking ---")
     
+    # 1. Définition des modèles de base
     clf1 = lgb.LGBMClassifier(**params_lgb)
     clf2 = xgb.XGBClassifier(**params_xgb)
     clf3 = CatBoostClassifier(**params_cat)
 
-    eclf = VotingClassifier(
-        estimators=[
-            ('lgb', cast(BaseEstimator, clf1)), 
-            ('xgb', cast(BaseEstimator, clf2)), 
-            ('cat', cast(BaseEstimator, clf3))
-        ],
-        voting='soft', verbose=True, n_jobs=1 
+    estimators_list = [
+        ('lgb', cast(BaseEstimator, clf1)), 
+        ('xgb', cast(BaseEstimator, clf2)), 
+        ('cat', cast(BaseEstimator, clf3))
+    ]
+
+    # 2. Définition du "Chef" (Méta-modèle)
+    # C'est lui qui va apprendre à pondérer les avis des autres
+    meta_learner = LogisticRegression(random_state=42, max_iter=1000)
+
+    # 3. Création du StackingClassifier
+    # n_jobs=1 est CRUCIAL ici sinon ton Mac va exploser (il fait déjà du parallélisme en interne)
+    eclf = StackingClassifier(
+        estimators=estimators_list,
+        final_estimator=meta_learner,
+        cv=5,               # Le Stacking a besoin de sa propre CV interne pour apprendre
+        stack_method='auto',
+        n_jobs=1,           # On garde séquentiel pour la stabilité
+        passthrough=False,  # False = Le chef ne voit que les prédictions, pas les données brutes
+        verbose=1
     )
 
-    # Calcul du score
-    cv_scores = cross_val_score(eclf, X_train, y_train_cls, cv=5, scoring='accuracy', n_jobs=1)
+    # --- Validation Croisée du Stacking ---
+    # Attention : C'est très long (3 modèles x 5 folds internes x 5 folds externes = 75 entraînements !)
+    # Si tu es pressé, réduis le cv externe à 3 ou saute l'étape d'estimation.
+    print("Calcul du score du Stacking (Patience, c'est plus long que le Voting)...")
+    
+    # On lance la validation
+    cv_scores = cross_val_score(eclf, X_train, y_train_cls, cv=3, scoring='accuracy', n_jobs=1)
     mon_score_estime = cv_scores.mean()
     
-    print(f"\n📊 SCORES CV: {cv_scores}")
+    print(f"\n📊 SCORES STACKING CV: {cv_scores}")
     print(f"🏆 MOYENNE : {mon_score_estime:.5f} (+/- {cv_scores.std():.5f})")
 
     # --- G. Décision et Sauvegarde ---
