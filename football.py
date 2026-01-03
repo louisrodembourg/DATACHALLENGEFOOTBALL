@@ -104,11 +104,16 @@ def load_data(base_path='data/'):
 # =============================================================================
 
 def aggregate_players_by_position(player_df, prefix):
+    """
+    VERSION SIMPLE (V2) : Mean et Sum uniquement.
+     Agrégation par position des joueurs."""
     numeric_cols = player_df.select_dtypes(include=[np.number]).columns.tolist()
     if 'ID' not in numeric_cols: numeric_cols.append('ID')
     
+    # Agrégation standard (Mean + Sum)
     cols_to_use = numeric_cols + ['POSITION']
     pivot_df = player_df[cols_to_use].groupby(['ID', 'POSITION']).agg(['mean', 'sum'])
+    
     pivot_df.columns = [f'{c[0]}_{c[1]}' for c in pivot_df.columns]
     flat_df = pivot_df.unstack(level='POSITION')
     flat_df.columns = [f'{prefix}_{pos}_{col}' for col, pos in flat_df.columns]
@@ -117,27 +122,74 @@ def aggregate_players_by_position(player_df, prefix):
     return flat_df
 
 def build_features_v2(team_home, team_away, player_home, player_away):
-    print("--- Construction des features V2 (Position-Aware) ---")
+    print("--- Construction des features (Raw) ---")
+    
+    # 1. Agrégation SIMPLE
     p_home_agg = aggregate_players_by_position(player_home, 'P_HOME')
     p_away_agg = aggregate_players_by_position(player_away, 'P_AWAY')
     
     df = team_home.merge(team_away, on='ID', suffixes=('_HOME', '_AWAY'))
     df = df.merge(p_home_agg, on='ID', how='left')
     df = df.merge(p_away_agg, on='ID', how='left')
-    
+    df.fillna(0, inplace=True)
+
+    # 2. DEEP QUALITY
+    try:
+        df['HOME_EFFICIENCY'] = df['TEAM_GOALS_season_sum_HOME'] / (df['TEAM_SHOTS_TOTAL_season_sum_HOME'] + 1)
+        df['AWAY_EFFICIENCY'] = df['TEAM_GOALS_season_sum_AWAY'] / (df['TEAM_SHOTS_TOTAL_season_sum_AWAY'] + 1)
+        
+        s_on_h = [c for c in df.columns if 'SHOTS_ON_TARGET' in c and '_HOME' in c and 'TEAM' in c][0]
+        s_tot_h = 'TEAM_SHOTS_TOTAL_season_sum_HOME'
+        s_on_a = [c for c in df.columns if 'SHOTS_ON_TARGET' in c and '_AWAY' in c and 'TEAM' in c][0]
+        s_tot_a = 'TEAM_SHOTS_TOTAL_season_sum_AWAY'
+        
+        df['HOME_ACCURACY'] = df[s_on_h] / (df[s_tot_h] + 1)
+        df['AWAY_ACCURACY'] = df[s_on_a] / (df[s_tot_a] + 1)
+        
+        df['HOME_GK_RESISTANCE'] = 1 - (df['TEAM_GOALS_season_sum_AWAY'] / (df[s_on_a] + 1))
+        df['AWAY_GK_RESISTANCE'] = 1 - (df['TEAM_GOALS_season_sum_HOME'] / (df[s_on_h] + 1))
+    except: pass
+
+    # 3. SMART DELTAS (Physique & Créativité)
+    try:
+        c_shot_h = [c for c in df.columns if 'P_HOME' in c and 'FORWARD' in c and 'SHOTS' in c and 'TARGET' in c and 'sum' in c]
+        c_save_a = [c for c in df.columns if 'P_AWAY' in c and 'GOALKEEPER' in c and 'SAVES' in c and 'sum' in c]
+        if c_shot_h and c_save_a: df['DUEL_ATT_H_GK_A'] = df[c_shot_h[0]] - df[c_save_a[0]]
+            
+        c_shot_a = [c for c in df.columns if 'P_AWAY' in c and 'FORWARD' in c and 'SHOTS' in c and 'TARGET' in c and 'sum' in c]
+        c_save_h = [c for c in df.columns if 'P_HOME' in c and 'GOALKEEPER' in c and 'SAVES' in c and 'sum' in c]
+        if c_shot_a and c_save_h: df['DUEL_ATT_A_GK_H'] = df[c_shot_a[0]] - df[c_save_h[0]]
+
+        col_duel = 'PLAYER_DUELS_WON'
+        cols_duels_h = [c for c in df.columns if 'P_HOME' in c and col_duel in c and 'sum' in c]
+        cols_duels_a = [c for c in df.columns if 'P_AWAY' in c and col_duel in c and 'sum' in c]
+        if cols_duels_h: df['PHYSICAL_DOMINANCE'] = df[cols_duels_h].sum(axis=1) - df[cols_duels_a].sum(axis=1)
+
+        col_key = 'PLAYER_KEY_PASSES'
+        cols_key_h = [c for c in df.columns if 'P_HOME' in c and col_key in c and 'sum' in c]
+        cols_key_a = [c for c in df.columns if 'P_AWAY' in c and col_key in c and 'sum' in c]
+        if cols_key_h: df['CREATIVITY_DIFF'] = df[cols_key_h].sum(axis=1) - df[cols_key_a].sum(axis=1)
+    except: pass
+
+    # 4. Deltas Classiques
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     base_features = set([c.replace('_HOME', '') for c in numeric_cols if '_HOME' in c])
-    
-    # print(f"Création des deltas sur {len(base_features)} variables...")
     for col in base_features:
-        col_h = f"{col}_HOME"
-        col_a = f"{col}_AWAY"
-        if col_h in df.columns and col_a in df.columns:
-            df[f'DELTA_{col}'] = df[col_h] - df[col_a]
+        col_h, col_a = f"{col}_HOME", f"{col}_AWAY"
+        if col_h in df.columns and col_a in df.columns: df[f'DELTA_{col}'] = df[col_h] - df[col_a]
+
+    # 5. NETTOYAGE BASIQUE (Pas de corrélation ici !)
+    df = df.loc[:, (df != 0).any(axis=0)]
+    zeros = (df == 0).mean()
+    df = df.loc[:, zeros < 0.995]
+    df = df.loc[:, ~df.columns.duplicated()]
     
+    cols_to_drop = df.select_dtypes(include=['object']).columns
+    if len(cols_to_drop) > 0: df.drop(columns=cols_to_drop, inplace=True)
+
     drop_cols = ['LEAGUE_HOME', 'TEAM_NAME_HOME', 'LEAGUE_AWAY', 'TEAM_NAME_AWAY', 'LEAGUE', 'TEAM_NAME']
     df.drop(columns=[c for c in drop_cols if c in df.columns], inplace=True)
-    df.fillna(0, inplace=True)
+    
     return df
 
 # =============================================================================
@@ -176,12 +228,43 @@ if __name__ == "__main__":
     # --- B. Construction Features ---
     X_train = build_features_v2(xt_h, xt_a, xp_h, xp_a)
     X_test = build_features_v2(xtest_h, xtest_a, xpt_h, xpt_a)
+    print(f"Dimensions avant alignement : Train={X_train.shape}, Test={X_test.shape}")
     
-    # Alignement et nettoyage ID
+    # --- 1. NETTOYAGE CORRÉLATION CENTRALISÉ (La correction critique) ---
+    # On calcule uniquement sur le TRAIN pour ne pas tricher
+    print("Construction de la matrice de corrélation sur le TRAIN...")
+    
+    # On exclut 'ID' du calcul pour ne pas le virer par erreur
+    features_for_corr = X_train.drop(columns=['ID'], errors='ignore').select_dtypes(include=[np.number])
+    
+    corr_matrix = features_for_corr.corr().abs()
+    upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+    
+    # Liste des colonnes à supprimer (Corr > 0.95)
+    to_drop = [column for column in upper.columns if any(upper[column] > 0.95)]
+    print(f"📉 Suppression de {len(to_drop)} colonnes corrélées (Train & Test)...")
+    
+    # ON APPLIQUE LA SUPPRESSION SUR LES DEUX
+    X_train.drop(columns=to_drop, errors='ignore', inplace=True)
+    X_test.drop(columns=to_drop, errors='ignore', inplace=True)
+
+    # --- 2. ALIGNEMENT ET NETTOYAGE ID (Ton code adapté) ---
+    # L'alignement va maintenant gérer proprement les petits écarts restants 
+    # (ex: une colonne vide dans Test mais pas dans Train qui aurait survécu au nettoyage basique)
+    print("Alignement final des colonnes...")
     X_train, X_test = X_train.align(X_test, join='inner', axis=1)
-    ID_test = X_test['ID']
-    X_train = X_train.drop(columns=['ID'])
-    X_test = X_test.drop(columns=['ID'])
+    
+    print(f"✅ Dimensions SYNCHRONISÉES : Train={X_train.shape}, Test={X_test.shape}")
+
+    # Sauvegarde et suppression ID
+    if 'ID' in X_test.columns:
+        ID_test = X_test['ID']
+    else:
+        # Cas rare où l'ID serait passé en index lors de l'align
+        ID_test = X_test.index 
+        
+    X_train = X_train.drop(columns=['ID'], errors='ignore')
+    X_test = X_test.drop(columns=['ID'], errors='ignore')
 
     # Targets
     y_classes = y_train_raw[['AWAY_WINS', 'DRAW', 'HOME_WINS']].idxmax(axis=1)
@@ -200,24 +283,24 @@ if __name__ == "__main__":
     regressor.fit(X_train.drop(columns=['PRED_GOAL_DIFF']), y_train_reg)
     X_test['PRED_GOAL_DIFF'] = regressor.predict(X_test)
 
-    # --- D. Feature Selection (Optionnel - Désactivé par défaut) ---
-    if True: # Mettre True pour activer
-        print("Démarrage de la sélection des features...")
-        selector = lgb.LGBMClassifier(n_estimators=100, learning_rate=0.1, n_jobs=-1, verbose=-1)
-        selector.fit(X_train, y_train_cls)
-        model_selector = SelectFromModel(selector, prefit=True, threshold="1.25*mean")
-        # 3. On sauvegarde les noms des colonnes avant transformation (pour info)
-        original_cols = X_train.columns
-        n_original = X_train.shape[1]
-        X_train_selected = model_selector.transform(X_train)
-        X_test_selected = model_selector.transform(X_test)
-        selected_mask = model_selector.get_support()
-        selected_columns = original_cols[selected_mask]
-        X_train = pd.DataFrame(cast(np.ndarray, X_train_selected), columns=selected_columns)
-        X_test = pd.DataFrame(cast(np.ndarray, X_test_selected), columns=selected_columns)
+    # # --- D. Feature Selection (Optionnel - Désactivé par défaut) ---
+    # if True: # Mettre True pour activer
+    #     print("Démarrage de la sélection des features...")
+    #     selector = lgb.LGBMClassifier(n_estimators=100, learning_rate=0.1, n_jobs=-1, verbose=-1)
+    #     selector.fit(X_train, y_train_cls)
+    #     model_selector = SelectFromModel(selector, prefit=True, threshold="1.25*mean")
+    #     # 3. On sauvegarde les noms des colonnes avant transformation (pour info)
+    #     original_cols = X_train.columns
+    #     n_original = X_train.shape[1]
+    #     X_train_selected = model_selector.transform(X_train)
+    #     X_test_selected = model_selector.transform(X_test)
+    #     selected_mask = model_selector.get_support()
+    #     selected_columns = original_cols[selected_mask]
+    #     X_train = pd.DataFrame(cast(np.ndarray, X_train_selected), columns=selected_columns)
+    #     X_test = pd.DataFrame(cast(np.ndarray, X_test_selected), columns=selected_columns)
 
-        print(f"✅ Nettoyage terminé : Passage de {n_original} à {X_train.shape[1]} features.")
-        print(f"Les features conservées sont les plus pertinentes pour la victoire.")
+    #     print(f"✅ Nettoyage terminé : Passage de {n_original} à {X_train.shape[1]} features.")
+    #     print(f"Les features conservées sont les plus pertinentes pour la victoire.")
 
     # --- E. Configuration des Modèles ---
     # Si tu veux relancer Optuna, décommente les lignes ci-dessous :

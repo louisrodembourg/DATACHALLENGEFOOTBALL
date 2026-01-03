@@ -149,14 +149,26 @@ def build_features_experimental(team_home, team_away, player_home, player_away):
         df = df.loc[:, ~df.columns.duplicated()]
     
     if USE_CORR_CLEANING:
-        # Copie le bloc du message précédent si tu veux le réactiver
-        pass 
+        print("👉 Nettoyage Corrélation (Patience... ~1-2 min)...")
+        # 1. Calcul Matrice de Corrélation (Valeur Absolue)
+        # On ne prend que les numériques pour éviter crash
+        nums = df.select_dtypes(include=[np.number])
+        corr_matrix = nums.corr().abs()
+        
+        # 2. Sélection du triangle supérieur
+        upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+        
+        # 3. Trouver les colonnes à supprimer (> 0.95)
+        to_drop = [column for column in upper.columns if any(upper[column] > 0.95)]
+        
+        print(f"   📉 Suppression de {len(to_drop)} features hautement corrélées.")
+        df.drop(to_drop, axis=1, inplace=True)
     
+    # Drop final
     drop_cols = ['LEAGUE_HOME', 'TEAM_NAME_HOME', 'LEAGUE_AWAY', 'TEAM_NAME_AWAY', 'LEAGUE', 'TEAM_NAME']
     df.drop(columns=[c for c in drop_cols if c in df.columns], inplace=True)
     
     return df
-
 def fast_evaluate():
     (xt_h, xt_a, xp_h, xp_a, y_train_raw, _, _, _, _, _) = load_data()
     X = build_features_experimental(xt_h, xt_a, xp_h, xp_a)
