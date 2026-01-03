@@ -194,25 +194,37 @@ if __name__ == "__main__":
     # --- C. Target Auxiliaire (Goal Diff) ---
     print("--- Ajout Feature Auxiliaire (Goal Diff) ---")
     regressor = CatBoostRegressor(iterations=500, learning_rate=0.05, depth=6, verbose=0, random_state=42)
+    # Feature 'PRED_GOAL_DIFF' pour le Train (via Cross Validation pour éviter fuite)
     X_train['PRED_GOAL_DIFF'] = cross_val_predict(cast(BaseEstimator, regressor), X_train, y_train_reg, cv=5, n_jobs=-1)
-    
+    # Feature 'PRED_GOAL_DIFF' pour le Test (via entraînement complet)
     regressor.fit(X_train.drop(columns=['PRED_GOAL_DIFF']), y_train_reg)
     X_test['PRED_GOAL_DIFF'] = regressor.predict(X_test)
 
     # --- D. Feature Selection (Optionnel - Désactivé par défaut) ---
-    if False: # Mettre True pour activer
+    if True: # Mettre True pour activer
         print("Démarrage de la sélection des features...")
         selector = lgb.LGBMClassifier(n_estimators=100, learning_rate=0.1, n_jobs=-1, verbose=-1)
         selector.fit(X_train, y_train_cls)
         model_selector = SelectFromModel(selector, prefit=True, threshold="1.25*mean")
+        # 3. On sauvegarde les noms des colonnes avant transformation (pour info)
+        original_cols = X_train.columns
+        n_original = X_train.shape[1]
         X_train_selected = model_selector.transform(X_train)
         X_test_selected = model_selector.transform(X_test)
-        # Remise en DataFrame... (Code gardé en réserve)
+        selected_mask = model_selector.get_support()
+        selected_columns = original_cols[selected_mask]
+        X_train = pd.DataFrame(cast(np.ndarray, X_train_selected), columns=selected_columns)
+        X_test = pd.DataFrame(cast(np.ndarray, X_test_selected), columns=selected_columns)
+
+        print(f"✅ Nettoyage terminé : Passage de {n_original} à {X_train.shape[1]} features.")
+        print(f"Les features conservées sont les plus pertinentes pour la victoire.")
 
     # --- E. Configuration des Modèles ---
     # Si tu veux relancer Optuna, décommente les lignes ci-dessous :
     # study = optuna.create_study(direction='maximize')
     # study.optimize(lambda trial: objective_lgb(trial, X_train, y_train_cls), n_trials=30)
+    #best_params_lgb = study.best_params
+    #print("Best Params:", best_params_lgb
     
     params_lgb = {
         'n_estimators': 2000, 'learning_rate': 0.03, 'num_leaves': 20, 
@@ -236,10 +248,9 @@ if __name__ == "__main__":
         "stacking": True,
         "meta_learner": "LogisticRegression",
         "meta_features": "OOF predict_proba + PRED_GOAL_DIFF",
-        "desc": run_description
     }
 
-    # --- F. Construction du Stacking (Remplacement du Voting) ---
+    # --- F. Construction du Stacking & Estimation ---
     print("\n--- ÉTAPE 1 : Configuration du Stacking ---")
     
     # 1. Définition des modèles de base
@@ -254,32 +265,37 @@ if __name__ == "__main__":
     ]
 
     # 2. Définition du "Chef" (Méta-modèle)
-    # C'est lui qui va apprendre à pondérer les avis des autres
     meta_learner = LogisticRegression(random_state=42, max_iter=1000)
 
-    # 3. Création du StackingClassifier
-    # n_jobs=1 est CRUCIAL ici sinon ton Mac va exploser (il fait déjà du parallélisme en interne)
+    # 3. Création du StackingClassifier (C'est ici qu'on crée le modèle 'eclf')
+    # n_jobs=1 est crucial pour éviter les conflits avec le parallélisme interne
     eclf = StackingClassifier(
         estimators=estimators_list,
         final_estimator=meta_learner,
-        cv=5,               # Le Stacking a besoin de sa propre CV interne pour apprendre
+        cv=5,               # Le Stacking garde sa CV interne de 5 folds (indispensable)
         stack_method='auto',
-        n_jobs=1,           # On garde séquentiel pour la stabilité
-        passthrough=False,  # False = Le chef ne voit que les prédictions, pas les données brutes
+        n_jobs=1,
+        passthrough=False,
         verbose=1
     )
 
-    # --- Validation Croisée du Stacking ---
-    # Attention : C'est très long (3 modèles x 5 folds internes x 5 folds externes = 75 entraînements !)
-    # Si tu es pressé, réduis le cv externe à 3 ou saute l'étape d'estimation.
-    print("Calcul du score du Stacking (Patience, c'est plus long que le Voting)...")
+    # --- Estimation Rapide (Hold-Out) ---
+    print("\n--- ÉTAPE 1 : Estimation Rapide du Score (1 seul run) ---")
     
-    # On lance la validation
-    cv_scores = cross_val_score(eclf, X_train, y_train_cls, cv=3, scoring='accuracy', n_jobs=1)
-    mon_score_estime = cv_scores.mean()
+    # On coupe : 80% pour entraîner, 20% pour vérifier le score
+    X_tr_part, X_val_part, y_tr_part, y_val_part = train_test_split(
+        X_train, y_train_cls, test_size=0.2, random_state=42, stratify=y_train_cls
+    )
     
-    print(f"\n📊 SCORES STACKING CV: {cv_scores}")
-    print(f"🏆 MOYENNE : {mon_score_estime:.5f} (+/- {cv_scores.std():.5f})")
+    print("Entraînement sur 80% des données pour estimation...")
+    # On entraîne le Stacking sur la partie 'Train' (il fera sa cuisine interne CV=5 là-dessus)
+    eclf.fit(X_tr_part, y_tr_part)
+    
+    # On teste sur la partie 'Validation'
+    preds_val = eclf.predict(X_val_part)
+    mon_score_estime = accuracy_score(y_val_part, preds_val)
+    
+    print(f"📊 Score estimé (Validation set 20%) : {mon_score_estime:.5f}")
 
     # --- G. Décision et Sauvegarde ---
     
