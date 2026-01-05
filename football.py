@@ -7,7 +7,11 @@ import json
 import datetime
 import warnings
 from typing import cast
-
+from sklearn.neural_network import MLPClassifier
+from sklearn.decomposition import PCA
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
 # ML Imports
 import lightgbm as lgb
 import xgboost as xgb
@@ -340,11 +344,32 @@ if __name__ == "__main__":
     clf1 = lgb.LGBMClassifier(**params_lgb)
     clf2 = xgb.XGBClassifier(**params_xgb)
     clf3 = CatBoostClassifier(**params_cat)
+    clf4 = make_pipeline(
+        SimpleImputer(strategy='constant', fill_value=0),
+        StandardScaler(),
+        # On garde la PCA à 120 (ça a bien marché pour filtrer le bruit)
+        PCA(n_components=120, random_state=42),
+        MLPClassifier(
+            hidden_layer_sizes=(128, 64, 32),
+            activation='relu',
+            solver='adam',
+            alpha=0.05,                   # Régularisation moyenne
+            learning_rate_init=0.001,     # Vitesse standard
+            
+            # --- LE SECRET EST ICI ---
+            max_iter=4,                   # <--- ON GELE LE MODÈLE ICI ! (Ton pic était à 3)
+            early_stopping=False,         # On force l'arrêt manuel à 4, pas besoin d'auto-stop
+            
+            random_state=42,
+            verbose=False                 # On le fait taire pour le main
+        )
+    )
 
     estimators_list = [
         ('lgb', cast(BaseEstimator, clf1)), 
         ('xgb', cast(BaseEstimator, clf2)), 
-        ('cat', cast(BaseEstimator, clf3))
+        ('cat', cast(BaseEstimator, clf3)),
+        ('mlp_sniper', cast(BaseEstimator, clf4)) # <--- Il est prêt !
     ]
 
     # 2. Définition du "Chef" (Méta-modèle)
