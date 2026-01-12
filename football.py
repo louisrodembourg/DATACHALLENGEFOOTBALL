@@ -314,14 +314,16 @@ if __name__ == "__main__":
     #print("Best Params:", best_params_lgb
     
     params_lgb = {
-        'n_estimators': 2000, 'learning_rate': 0.03, 'num_leaves': 20, 
-        'colsample_bytree': 0.6, 'subsample': 0.8, 'random_state': 42,
-        'n_jobs': -1, 'verbose': -1
+        'n_estimators': 680, 'learning_rate': 0.006047203533566928, 'num_leaves': 87, 
+        'colsample_bytree': 0.6044442848527449, 'subsample': 0.800557500971823, 'random_state': 42,
+        'max_depth': 13, 'min_child_samples': 63,'n_jobs': -1, 'verbose': -1,'reg_alpha': 4.614173334936142,
+        'reg_lambda': 2.049690280922791
     }
     params_xgb = {
-        'n_estimators': 2000, 'learning_rate': 0.03, 'max_depth': 5, 
-        'colsample_bytree': 0.8, 'subsample': 0.8, 'random_state': 42,
-        'eval_metric': 'mlogloss', 'tree_method': 'hist', 'n_jobs': -1
+        'n_estimators': 444, 'learning_rate': 0.020188642966900427, 'max_depth': 10, 
+        'colsample_bytree': 0.6367834808496551, 'subsample': 0.7473194384456971, 'random_state': 42,
+        'eval_metric': 'mlogloss', 'tree_method': 'hist', 'n_jobs': -1,'gamma':4.967662956642563,
+        'min_child_weight': 6,'reg_alpha': 8.129955132262442, 'reg_lambda': 5.813142771285806
     }
     params_cat = {
         'iterations': 2000, 'learning_rate': 0.03, 'depth': 6, 
@@ -344,32 +346,11 @@ if __name__ == "__main__":
     clf1 = lgb.LGBMClassifier(**params_lgb)
     clf2 = xgb.XGBClassifier(**params_xgb)
     clf3 = CatBoostClassifier(**params_cat)
-    clf4 = make_pipeline(
-        SimpleImputer(strategy='constant', fill_value=0),
-        StandardScaler(),
-        # On garde la PCA à 120 (ça a bien marché pour filtrer le bruit)
-        PCA(n_components=120, random_state=42),
-        MLPClassifier(
-            hidden_layer_sizes=(128, 64, 32),
-            activation='relu',
-            solver='adam',
-            alpha=0.05,                   # Régularisation moyenne
-            learning_rate_init=0.001,     # Vitesse standard
-            
-            # --- LE SECRET EST ICI ---
-            max_iter=4,                   # <--- ON GELE LE MODÈLE ICI ! (Ton pic était à 3)
-            early_stopping=False,         # On force l'arrêt manuel à 4, pas besoin d'auto-stop
-            
-            random_state=42,
-            verbose=False                 # On le fait taire pour le main
-        )
-    )
-
+    
     estimators_list = [
         ('lgb', cast(BaseEstimator, clf1)), 
         ('xgb', cast(BaseEstimator, clf2)), 
         ('cat', cast(BaseEstimator, clf3)),
-        ('mlp_sniper', cast(BaseEstimator, clf4)) # <--- Il est prêt !
     ]
 
     # 2. Définition du "Chef" (Méta-modèle)
