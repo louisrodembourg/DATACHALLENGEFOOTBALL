@@ -137,22 +137,137 @@ def build_features_v2(team_home, team_away, player_home, player_away):
     df = df.merge(p_away_agg, on='ID', how='left')
     df.fillna(0, inplace=True)
 
-    # 2. DEEP QUALITY
+    # 1.5 TEAM ADVANCED RATIOS / EFFICIENCIES (scopes: season_* and 5_last_match_*)
+    # Objectif: compléter les DELTA_ déjà générés avec des ratios et des métriques de qualité.
+    EPS = 1e-6
     try:
-        df['HOME_EFFICIENCY'] = df['TEAM_GOALS_season_sum_HOME'] / (df['TEAM_SHOTS_TOTAL_season_sum_HOME'] + 1)
-        df['AWAY_EFFICIENCY'] = df['TEAM_GOALS_season_sum_AWAY'] / (df['TEAM_SHOTS_TOTAL_season_sum_AWAY'] + 1)
-        
-        s_on_h = [c for c in df.columns if 'SHOTS_ON_TARGET' in c and '_HOME' in c and 'TEAM' in c][0]
-        s_tot_h = 'TEAM_SHOTS_TOTAL_season_sum_HOME'
-        s_on_a = [c for c in df.columns if 'SHOTS_ON_TARGET' in c and '_AWAY' in c and 'TEAM' in c][0]
-        s_tot_a = 'TEAM_SHOTS_TOTAL_season_sum_AWAY'
-        
-        df['HOME_ACCURACY'] = df[s_on_h] / (df[s_tot_h] + 1)
-        df['AWAY_ACCURACY'] = df[s_on_a] / (df[s_tot_a] + 1)
-        
-        df['HOME_GK_RESISTANCE'] = 1 - (df['TEAM_GOALS_season_sum_AWAY'] / (df[s_on_a] + 1))
-        df['AWAY_GK_RESISTANCE'] = 1 - (df['TEAM_GOALS_season_sum_HOME'] / (df[s_on_h] + 1))
-    except: pass
+        def _safe_div(a, b):
+            return a / (b + EPS)
+
+        def _scopes(metric_prefix: str):
+            scopes = set()
+            for c in df.columns:
+                if not c.startswith(metric_prefix + '_'):
+                    continue
+                if not c.endswith('_HOME'):
+                    continue
+                scopes.add(c[len(metric_prefix) + 1 : -len('_HOME')])
+            return sorted(scopes)
+
+        def _col(base: str, side: str):
+            return f"{base}_{side}"
+
+        # --- Ratios simples (Home/Away) sur quelques signaux robustes ---
+        ratio_metrics = [
+            'TEAM_BALL_POSSESSION',
+            'TEAM_ATTACKS',
+            'TEAM_DANGEROUS_ATTACKS',
+            'TEAM_SHOTS_TOTAL',
+            'TEAM_SHOTS_ON_TARGET',
+            'TEAM_SHOTS_INSIDEBOX',
+            'TEAM_PASSES',
+            'TEAM_SUCCESSFUL_PASSES',
+            'TEAM_CORNERS',
+        ]
+
+        for m in ratio_metrics:
+            for sc in _scopes(m):
+                base = f"{m}_{sc}"
+                h, a = _col(base, 'HOME'), _col(base, 'AWAY')
+                if h in df.columns and a in df.columns:
+                    df[f'RATIO_{base}'] = _safe_div(df[h], df[a])
+
+        # --- Possession share (Home / (Home + Away)) ---
+        for sc in _scopes('TEAM_BALL_POSSESSION'):
+            base = f"TEAM_BALL_POSSESSION_{sc}"
+            h, a = _col(base, 'HOME'), _col(base, 'AWAY')
+            if h in df.columns and a in df.columns:
+                df[f'HOME_POSSESSION_SHARE_{sc}'] = _safe_div(df[h], df[h] + df[a])
+
+        # --- Efficiences / Qualité par scope ---
+        all_scopes = set()
+        for m in ['TEAM_SHOTS_TOTAL', 'TEAM_SHOTS_ON_TARGET', 'TEAM_SHOTS_INSIDEBOX', 'TEAM_GOALS',
+                  'TEAM_ATTACKS', 'TEAM_DANGEROUS_ATTACKS', 'TEAM_PASSES', 'TEAM_SUCCESSFUL_PASSES', 'TEAM_SAVES']:
+            all_scopes |= set(_scopes(m))
+        all_scopes = sorted(all_scopes)
+
+        for sc in all_scopes:
+            shots = f"TEAM_SHOTS_TOTAL_{sc}"
+            sot = f"TEAM_SHOTS_ON_TARGET_{sc}"
+            inside = f"TEAM_SHOTS_INSIDEBOX_{sc}"
+            goals = f"TEAM_GOALS_{sc}"
+            attacks = f"TEAM_ATTACKS_{sc}"
+            dang = f"TEAM_DANGEROUS_ATTACKS_{sc}"
+            passes = f"TEAM_PASSES_{sc}"
+            succ = f"TEAM_SUCCESSFUL_PASSES_{sc}"
+            saves = f"TEAM_SAVES_{sc}"
+
+            h_shots, a_shots = _col(shots, 'HOME'), _col(shots, 'AWAY')
+            h_sot, a_sot = _col(sot, 'HOME'), _col(sot, 'AWAY')
+            h_inside, a_inside = _col(inside, 'HOME'), _col(inside, 'AWAY')
+            h_goals, a_goals = _col(goals, 'HOME'), _col(goals, 'AWAY')
+            h_att, a_att = _col(attacks, 'HOME'), _col(attacks, 'AWAY')
+            h_dang, a_dang = _col(dang, 'HOME'), _col(dang, 'AWAY')
+            h_pass, a_pass = _col(passes, 'HOME'), _col(passes, 'AWAY')
+            h_succ, a_succ = _col(succ, 'HOME'), _col(succ, 'AWAY')
+            h_saves, a_saves = _col(saves, 'HOME'), _col(saves, 'AWAY')
+
+            # Shot accuracy: SOT / total
+            if h_sot in df.columns and h_shots in df.columns:
+                df[f'HOME_SHOT_ACCURACY_{sc}'] = _safe_div(df[h_sot], df[h_shots])
+            if a_sot in df.columns and a_shots in df.columns:
+                df[f'AWAY_SHOT_ACCURACY_{sc}'] = _safe_div(df[a_sot], df[a_shots])
+            if f'HOME_SHOT_ACCURACY_{sc}' in df.columns and f'AWAY_SHOT_ACCURACY_{sc}' in df.columns:
+                df[f'DELTA_SHOT_ACCURACY_{sc}'] = df[f'HOME_SHOT_ACCURACY_{sc}'] - df[f'AWAY_SHOT_ACCURACY_{sc}']
+
+            # Conversion: goals / total
+            if h_goals in df.columns and h_shots in df.columns:
+                df[f'HOME_CONVERSION_{sc}'] = _safe_div(df[h_goals], df[h_shots])
+            if a_goals in df.columns and a_shots in df.columns:
+                df[f'AWAY_CONVERSION_{sc}'] = _safe_div(df[a_goals], df[a_shots])
+            if f'HOME_CONVERSION_{sc}' in df.columns and f'AWAY_CONVERSION_{sc}' in df.columns:
+                df[f'DELTA_CONVERSION_{sc}'] = df[f'HOME_CONVERSION_{sc}'] - df[f'AWAY_CONVERSION_{sc}']
+
+            # Inside box share
+            if h_inside in df.columns and h_shots in df.columns:
+                df[f'HOME_INSIDEBOX_SHARE_{sc}'] = _safe_div(df[h_inside], df[h_shots])
+            if a_inside in df.columns and a_shots in df.columns:
+                df[f'AWAY_INSIDEBOX_SHARE_{sc}'] = _safe_div(df[a_inside], df[a_shots])
+            if f'HOME_INSIDEBOX_SHARE_{sc}' in df.columns and f'AWAY_INSIDEBOX_SHARE_{sc}' in df.columns:
+                df[f'DELTA_INSIDEBOX_SHARE_{sc}'] = df[f'HOME_INSIDEBOX_SHARE_{sc}'] - df[f'AWAY_INSIDEBOX_SHARE_{sc}']
+
+            # Danger ratio: dangerous attacks / attacks
+            if h_dang in df.columns and h_att in df.columns:
+                df[f'HOME_DANGER_RATIO_{sc}'] = _safe_div(df[h_dang], df[h_att])
+            if a_dang in df.columns and a_att in df.columns:
+                df[f'AWAY_DANGER_RATIO_{sc}'] = _safe_div(df[a_dang], df[a_att])
+            if f'HOME_DANGER_RATIO_{sc}' in df.columns and f'AWAY_DANGER_RATIO_{sc}' in df.columns:
+                df[f'DELTA_DANGER_RATIO_{sc}'] = df[f'HOME_DANGER_RATIO_{sc}'] - df[f'AWAY_DANGER_RATIO_{sc}']
+
+            # Pass completion: successful passes / passes
+            if h_succ in df.columns and h_pass in df.columns:
+                df[f'HOME_PASS_COMPLETION_{sc}'] = _safe_div(df[h_succ], df[h_pass])
+            if a_succ in df.columns and a_pass in df.columns:
+                df[f'AWAY_PASS_COMPLETION_{sc}'] = _safe_div(df[a_succ], df[a_pass])
+            if f'HOME_PASS_COMPLETION_{sc}' in df.columns and f'AWAY_PASS_COMPLETION_{sc}' in df.columns:
+                df[f'DELTA_PASS_COMPLETION_{sc}'] = df[f'HOME_PASS_COMPLETION_{sc}'] - df[f'AWAY_PASS_COMPLETION_{sc}']
+
+            # Cross attaque vs défense (shots on target vs saves)
+            if h_sot in df.columns and a_saves in df.columns:
+                df[f'CROSS_HOME_SOT_minus_AWAY_SAVES_{sc}'] = df[h_sot] - df[a_saves]
+            if a_sot in df.columns and h_saves in df.columns:
+                df[f'CROSS_AWAY_SOT_minus_HOME_SAVES_{sc}'] = df[a_sot] - df[h_saves]
+
+            # Saves per SOT faced (approx)
+            if h_saves in df.columns and a_sot in df.columns:
+                df[f'HOME_SAVES_PER_SOT_FACED_{sc}'] = _safe_div(df[h_saves], df[a_sot])
+            if a_saves in df.columns and h_sot in df.columns:
+                df[f'AWAY_SAVES_PER_SOT_FACED_{sc}'] = _safe_div(df[a_saves], df[h_sot])
+            if f'HOME_SAVES_PER_SOT_FACED_{sc}' in df.columns and f'AWAY_SAVES_PER_SOT_FACED_{sc}' in df.columns:
+                df[f'DELTA_SAVES_PER_SOT_FACED_{sc}'] = df[f'HOME_SAVES_PER_SOT_FACED_{sc}'] - df[f'AWAY_SAVES_PER_SOT_FACED_{sc}']
+    except:
+        pass
+
 
     # 3. SMART DELTAS (Physique & Créativité)
     try:
@@ -181,6 +296,15 @@ def build_features_v2(team_home, team_away, player_home, player_away):
     for col in base_features:
         col_h, col_a = f"{col}_HOME", f"{col}_AWAY"
         if col_h in df.columns and col_a in df.columns: df[f'DELTA_{col}'] = df[col_h] - df[col_a]
+
+    # 4.1 Nettoyage ciblé de deltas (data-driven)
+    # D'après l'ablation (CV 5-fold x 3) sur ton dataset: certains deltas "season_sum" sur W/L
+    # semblent ajouter du bruit / sur-apprentissage.
+    deltas_to_drop = [
+        'DELTA_TEAM_GAME_WON_season_sum',
+        'DELTA_TEAM_GAME_LOST_season_sum',
+    ]
+    df.drop(columns=[c for c in deltas_to_drop if c in df.columns], inplace=True)
 
     # 5. NETTOYAGE BASIQUE (Pas de corrélation ici !)
     df = df.loc[:, (df != 0).any(axis=0)]
@@ -277,6 +401,37 @@ if __name__ == "__main__":
     y_train_reg = y_supp['GOAL_DIFF_HOME_AWAY']
 
     print(f"Shape finale Train: {X_train.shape}")
+
+    # --- B.3 Feature Selection Top-K (data-driven, K=800) ---
+    # Motivation: ton benchmark delta_tree_eval (5 folds x 3 repeats) montre qu'un topK-only
+    # basé sur les importances améliore nettement le score tout en réduisant la dimension.
+    USE_TOPK_FEATURES = True
+    TOPK_FEATURES = 800
+    if USE_TOPK_FEATURES:
+        print(f"--- Sélection Top-{TOPK_FEATURES} features (LightGBM gain importance) ---")
+        selector_model = lgb.LGBMClassifier(
+            n_estimators=2000,
+            learning_rate=0.02,
+            num_leaves=31,
+            subsample=0.9,
+            colsample_bytree=0.9,
+            reg_lambda=1.0,
+            random_state=42,
+            n_jobs=-1,
+            verbose=-1,
+        )
+        selector_model.fit(X_train, y_train_cls)
+        booster = selector_model.booster_
+        importances = booster.feature_importance(importance_type='gain')
+        feature_names = booster.feature_name()
+        imp_df = pd.DataFrame({'feature': feature_names, 'importance_gain': importances})
+        imp_df.sort_values('importance_gain', ascending=False, inplace=True)
+        keep = imp_df['feature'].head(min(TOPK_FEATURES, imp_df.shape[0])).tolist()
+
+        # Filtre train/test
+        X_train = X_train[keep].copy()
+        X_test = X_test[keep].copy()
+        print(f"✅ Après TopK: Train={X_train.shape}, Test={X_test.shape}")
 
     # --- C. Target Auxiliaire (Goal Diff) ---
     print("--- Ajout Feature Auxiliaire (Goal Diff) ---")
@@ -389,7 +544,7 @@ if __name__ == "__main__":
     # --- G. Décision et Sauvegarde ---
     
     # Seuil pour passer en prod (à ajuster selon tes ambitions)
-    THRESHOLD_SCORE = 0.4815 
+    THRESHOLD_SCORE = 0.4850 
 
     if mon_score_estime < THRESHOLD_SCORE:
         print(f"\n❌ Score insuffisant (< {THRESHOLD_SCORE}). Arrêt du script.")

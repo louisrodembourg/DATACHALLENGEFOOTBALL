@@ -1,0 +1,49 @@
+{
+    "timestamp": "20260112_230944",
+    "cv_score": 0.49573344169036976,
+    "description": "V2 Features - Full (No Selection) - Stacking (LR meta) - Params Anti-Overfit",
+    "parameters": {
+        "lgb": {
+            "n_estimators": 680,
+            "learning_rate": 0.006047203533566928,
+            "num_leaves": 87,
+            "colsample_bytree": 0.6044442848527449,
+            "subsample": 0.800557500971823,
+            "random_state": 42,
+            "max_depth": 13,
+            "min_child_samples": 63,
+            "n_jobs": -1,
+            "verbose": -1,
+            "reg_alpha": 4.614173334936142,
+            "reg_lambda": 2.049690280922791
+        },
+        "xgb": {
+            "n_estimators": 444,
+            "learning_rate": 0.020188642966900427,
+            "max_depth": 10,
+            "colsample_bytree": 0.6367834808496551,
+            "subsample": 0.7473194384456971,
+            "random_state": 42,
+            "eval_metric": "mlogloss",
+            "tree_method": "hist",
+            "n_jobs": -1,
+            "gamma": 4.967662956642563,
+            "min_child_weight": 6,
+            "reg_alpha": 8.129955132262442,
+            "reg_lambda": 5.813142771285806
+        },
+        "cat": {
+            "iterations": 2000,
+            "learning_rate": 0.03,
+            "depth": 6,
+            "rsm": 0.6,
+            "verbose": 0,
+            "random_state": 42,
+            "thread_count": -1
+        },
+        "stacking": true,
+        "meta_learner": "LogisticRegression",
+        "meta_features": "OOF predict_proba + PRED_GOAL_DIFF"
+    },
+    "status": "COMPLETED"
+}
