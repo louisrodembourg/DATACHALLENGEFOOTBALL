@@ -6,7 +6,8 @@ import glob
 import json
 import datetime
 import warnings
-from typing import cast
+import argparse
+from typing import cast, Protocol, Any
 from sklearn.neural_network import MLPClassifier
 from sklearn.decomposition import PCA
 from sklearn.pipeline import make_pipeline
@@ -27,6 +28,38 @@ from sklearn.feature_selection import SelectFromModel
 
 # Configuration
 warnings.filterwarnings('ignore')
+
+
+class _ProbClassifier(Protocol):
+    classes_: Any
+
+    def fit(self, X: Any, y: Any) -> Any: ...
+
+    def predict(self, X: Any) -> Any: ...
+
+    def predict_proba(self, X: Any) -> Any: ...
+
+
+def _parse_args():
+    parser = argparse.ArgumentParser(description="Football pipeline: train + submission")
+    parser.add_argument(
+        "--model",
+        choices=["lgb", "xgb", "cat", "stack"],
+        default=None,
+        help="Choix du modèle: lgb/xgb/cat/stack. Si absent, menu interactif.",
+    )
+    return parser.parse_args()
+
+
+def _prompt_model_choice() -> str:
+    print("\nQuel modèle veux-tu utiliser ?")
+    print("1. LightGBM (lgb)")
+    print("2. XGBoost (xgb)")
+    print("3. CatBoost (cat)")
+    print("4. Stacking (stack) [défaut]")
+    choice = input("Ton choix (1/2/3/4) : ").strip()
+    mapping = {"1": "lgb", "2": "xgb", "3": "cat", "4": "stack"}
+    return mapping.get(choice, "stack")
 
 # =============================================================================
 # 1. UTILITAIRES & LOGGING
@@ -348,6 +381,8 @@ def objective_lgb(trial, X, y):
 # =============================================================================
 
 if __name__ == "__main__":
+
+    args = _parse_args()
     
     # --- A. Chargement ---
     (xt_h, xt_a, xp_h, xp_a, y_train_raw, y_supp, 
@@ -465,63 +500,73 @@ if __name__ == "__main__":
     # Si tu veux relancer Optuna, décommente les lignes ci-dessous :
     # study = optuna.create_study(direction='maximize')
     # study.optimize(lambda trial: objective_lgb(trial, X_train, y_train_cls), n_trials=30)
-    #best_params_lgb = study.best_params
-    #print("Best Params:", best_params_lgb
-    
+    # best_params_lgb = study.best_params
+    # print("Best Params:", best_params_lgb)
+
+    model_choice = args.model or _prompt_model_choice()
+    print(f"\n✅ Modèle choisi: {model_choice}")
+
     params_lgb = {
-        'n_estimators': 680, 'learning_rate': 0.006047203533566928, 'num_leaves': 87, 
-        'colsample_bytree': 0.6044442848527449, 'subsample': 0.800557500971823, 'random_state': 42,
-        'max_depth': 13, 'min_child_samples': 63,'n_jobs': -1, 'verbose': -1,'reg_alpha': 4.614173334936142,
-        'reg_lambda': 2.049690280922791
-    }
+        'n_estimators': 675, 'learning_rate': 0.006921430104787609, 'num_leaves': 96, 
+        'colsample_bytree': 0.7349031047131501, 'subsample': 0.9451510441002412, 'random_state': 42,
+        'max_depth': 18, 'min_child_samples': 53,'n_jobs': -1, 'verbose': -1,'reg_alpha': 0.018217537238705006,
+        'reg_lambda': 8.02527438958144}
     params_xgb = {
-        'n_estimators': 444, 'learning_rate': 0.020188642966900427, 'max_depth': 10, 
-        'colsample_bytree': 0.6367834808496551, 'subsample': 0.7473194384456971, 'random_state': 42,
-        'eval_metric': 'mlogloss', 'tree_method': 'hist', 'n_jobs': -1,'gamma':4.967662956642563,
-        'min_child_weight': 6,'reg_alpha': 8.129955132262442, 'reg_lambda': 5.813142771285806
+        'n_estimators': 463, 'learning_rate': 0.013621254775271107, 'max_depth': 3, 
+        'colsample_bytree': 0.5113398671313254, 'subsample': 0.5465452013828958, 'random_state': 42,
+        'eval_metric': 'mlogloss', 'tree_method': 'hist', 'n_jobs': -1,'gamma':2.3773484745997786,
+        'min_child_weight': 2,'reg_alpha': 0.7854236780369659, 'reg_lambda': 3.5901935424101845
     }
     params_cat = {
-        'iterations': 2000, 'learning_rate': 0.03, 'depth': 6, 
-        'rsm': 0.6, 'verbose': 0, 'random_state': 42, 'thread_count': -1
+        'iterations': 1041, 'learning_rate': 0.018811897562003008, 'depth': 10,
+        'l2_leaf_reg': 2.2707122819052272,'border_count': 101,'subsample': 0.7912439842621549,
+        'bootstrap_type': 'Bernoulli',
+        'random_strength': 2.2811358187843416,
+        'rsm': 0.6, 'verbose': 0, 'random_state': 42, 'thread_count': -1,
+        'allow_writing_files': False
     }
     
     # Description pour le log
-    run_description = "V2 Features - Full (No Selection) - Stacking (LR meta) - Params Anti-Overfit"
+    run_description = f"V2 Features - TopK=800 - PRED_GOAL_DIFF - model={model_choice}"
     experiment_params = {
-        "lgb": params_lgb, "xgb": params_xgb, "cat": params_cat,
-        "stacking": True,
-        "meta_learner": "LogisticRegression",
-        "meta_features": "OOF predict_proba + PRED_GOAL_DIFF",
+        "model": model_choice,
+        "lgb": params_lgb,
+        "xgb": params_xgb,
+        "cat": params_cat,
+        "meta_features": "PRED_GOAL_DIFF (+ stacking OOF predict_proba si stack)",
     }
 
-    # --- F. Construction du Stacking & Estimation ---
-    print("\n--- ÉTAPE 1 : Configuration du Stacking ---")
-    
-    # 1. Définition des modèles de base
-    clf1 = lgb.LGBMClassifier(**params_lgb)
-    clf2 = xgb.XGBClassifier(**params_xgb)
-    clf3 = CatBoostClassifier(**params_cat)
-    
-    estimators_list = [
-        ('lgb', cast(BaseEstimator, clf1)), 
-        ('xgb', cast(BaseEstimator, clf2)), 
-        ('cat', cast(BaseEstimator, clf3)),
-    ]
+    # --- F. Construction du Modèle ---
+    print("\n--- ÉTAPE 1 : Construction du Modèle ---")
 
-    # 2. Définition du "Chef" (Méta-modèle)
-    meta_learner = LogisticRegression(random_state=42, max_iter=1000)
-
-    # 3. Création du StackingClassifier (C'est ici qu'on crée le modèle 'eclf')
-    # n_jobs=1 est crucial pour éviter les conflits avec le parallélisme interne
-    eclf = StackingClassifier(
-        estimators=estimators_list,
-        final_estimator=meta_learner,
-        cv=5,               # Le Stacking garde sa CV interne de 5 folds (indispensable)
-        stack_method='auto',
-        n_jobs=1,
-        passthrough=False,
-        verbose=1
-    )
+    if model_choice == 'lgb':
+        model = cast(_ProbClassifier, lgb.LGBMClassifier(**params_lgb))
+    elif model_choice == 'xgb':
+        model = cast(_ProbClassifier, xgb.XGBClassifier(**params_xgb))
+    elif model_choice == 'cat':
+        model = cast(_ProbClassifier, CatBoostClassifier(**params_cat))
+    else:
+        clf1 = lgb.LGBMClassifier(**params_lgb)
+        clf2 = xgb.XGBClassifier(**params_xgb)
+        clf3 = CatBoostClassifier(**params_cat)
+        estimators_list = [
+            ('lgb', cast(BaseEstimator, clf1)),
+            ('xgb', cast(BaseEstimator, clf2)),
+            ('cat', cast(BaseEstimator, clf3)),
+        ]
+        meta_learner = LogisticRegression(random_state=42, max_iter=1000)
+        model = cast(
+            _ProbClassifier,
+            StackingClassifier(
+                estimators=estimators_list,
+                final_estimator=meta_learner,
+                cv=5,
+                stack_method='auto',
+                n_jobs=1,
+                passthrough=False,
+                verbose=1,
+            ),
+        )
 
     # --- Estimation Rapide (Hold-Out) ---
     print("\n--- ÉTAPE 1 : Estimation Rapide du Score (1 seul run) ---")
@@ -532,11 +577,10 @@ if __name__ == "__main__":
     )
     
     print("Entraînement sur 80% des données pour estimation...")
-    # On entraîne le Stacking sur la partie 'Train' (il fera sa cuisine interne CV=5 là-dessus)
-    eclf.fit(X_tr_part, y_tr_part)
+    model.fit(X_tr_part, y_tr_part)
     
     # On teste sur la partie 'Validation'
-    preds_val = eclf.predict(X_val_part)
+    preds_val = model.predict(X_val_part)
     mon_score_estime = accuracy_score(y_val_part, preds_val)
     
     print(f"📊 Score estimé (Validation set 20%) : {mon_score_estime:.5f}")
@@ -561,15 +605,17 @@ if __name__ == "__main__":
 
     # --- H. Entraînement Final & Prédictions ---
     print("--- ÉTAPE 2 : Entraînement Final (100% Data) ---")
-    eclf.fit(X_train, y_train_cls)
-    probs = eclf.predict_proba(X_test)
+    model.fit(X_train, y_train_cls)
+    probs = np.asarray(model.predict_proba(X_test))
 
     # --- I. Formatage Soumission ---
+    classes = getattr(model, 'classes_', np.array([0, 1, 2]))
+    class_to_col = {int(c): i for i, c in enumerate(classes)}
     submission = pd.DataFrame({
         'ID': ID_test,
-        'HOME_WINS': probs[:, 2],
-        'DRAW': probs[:, 1],
-        'AWAY_WINS': probs[:, 0]
+        'HOME_WINS': probs[:, class_to_col[2]],
+        'DRAW': probs[:, class_to_col[1]],
+        'AWAY_WINS': probs[:, class_to_col[0]],
     })
     
     # Conversion Binaire (Strict 0/1)
