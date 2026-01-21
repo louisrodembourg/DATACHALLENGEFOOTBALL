@@ -1,0 +1,54 @@
+{
+    "timestamp": "20260116_182414",
+    "cv_score": 0.4924827305973182,
+    "description": "V2 Features - TopK=800 - PRED_GOAL_DIFF - model=stack",
+    "parameters": {
+        "model": "stack",
+        "lgb": {
+            "n_estimators": 675,
+            "learning_rate": 0.006921430104787609,
+            "num_leaves": 96,
+            "colsample_bytree": 0.7349031047131501,
+            "subsample": 0.9451510441002412,
+            "random_state": 42,
+            "max_depth": 18,
+            "min_child_samples": 53,
+            "n_jobs": -1,
+            "verbose": -1,
+            "reg_alpha": 0.018217537238705006,
+            "reg_lambda": 8.02527438958144
+        },
+        "xgb": {
+            "n_estimators": 463,
+            "learning_rate": 0.013621254775271107,
+            "max_depth": 3,
+            "colsample_bytree": 0.5113398671313254,
+            "subsample": 0.5465452013828958,
+            "random_state": 42,
+            "eval_metric": "mlogloss",
+            "tree_method": "hist",
+            "n_jobs": -1,
+            "gamma": 2.3773484745997786,
+            "min_child_weight": 2,
+            "reg_alpha": 0.7854236780369659,
+            "reg_lambda": 3.5901935424101845
+        },
+        "cat": {
+            "iterations": 1041,
+            "learning_rate": 0.018811897562003008,
+            "depth": 10,
+            "l2_leaf_reg": 2.2707122819052272,
+            "border_count": 101,
+            "subsample": 0.7912439842621549,
+            "bootstrap_type": "Bernoulli",
+            "random_strength": 2.2811358187843416,
+            "rsm": 0.6,
+            "verbose": 0,
+            "random_state": 42,
+            "thread_count": -1,
+            "allow_writing_files": false
+        },
+        "meta_features": "PRED_GOAL_DIFF"
+    },
+    "status": "COMPLETED"
+}

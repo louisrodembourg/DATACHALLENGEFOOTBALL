@@ -1,3 +1,14 @@
+"""
+Football Match Prediction Pipeline.
+Includes: Feature Engineering, Feature Selection, and Model Stacking/Boosting.
+
+This file is structured to be read alongside `EXPLICATION_FOOTBALL_PY.md`.
+"""
+
+# =============================================================================
+# 1. Imports and Configuration
+# =============================================================================
+
 import pandas as pd
 import numpy as np
 import os
@@ -8,73 +19,73 @@ import datetime
 import warnings
 import argparse
 from typing import cast, Protocol, Any
+
+# Machine Learning & Stats
 from sklearn.neural_network import MLPClassifier
 from sklearn.decomposition import PCA
 from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.impute import SimpleImputer
-# ML Imports
-import lightgbm as lgb
-import xgboost as xgb
-import optuna
-from catboost import CatBoostClassifier, CatBoostRegressor
 from sklearn.model_selection import StratifiedKFold, KFold, cross_val_score, train_test_split, cross_val_predict
-from sklearn.preprocessing import LabelEncoder
 from sklearn.ensemble import VotingClassifier, StackingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 from sklearn.base import BaseEstimator
 from sklearn.feature_selection import SelectFromModel
 
+# Boosting Libraries
+import lightgbm as lgb
+import xgboost as xgb
+import optuna
+from catboost import CatBoostClassifier, CatBoostRegressor
+
 # Configuration
 warnings.filterwarnings('ignore')
 
-
+# To clean output and avoid warnings
 class _ProbClassifier(Protocol):
     classes_: Any
 
     def fit(self, X: Any, y: Any) -> Any: ...
-
     def predict(self, X: Any) -> Any: ...
-
     def predict_proba(self, X: Any) -> Any: ...
 
 
 def _parse_args():
-    parser = argparse.ArgumentParser(description="Football pipeline: train + submission")
+    parser = argparse.ArgumentParser(description="Football Pipeline: Training and Submission")
     parser.add_argument(
         "--model",
         choices=["lgb", "xgb", "cat", "stack"],
         default=None,
-        help="Choix du modèle: lgb/xgb/cat/stack. Si absent, menu interactif.",
+        help="Model to use: lgb, xgb, cat, stack.",
     )
     return parser.parse_args()
 
 
 def _prompt_model_choice() -> str:
-    print("\nQuel modèle veux-tu utiliser ?")
+    print("\n=== Model Choice ===")
     print("1. LightGBM (lgb)")
     print("2. XGBoost (xgb)")
     print("3. CatBoost (cat)")
-    print("4. Stacking (stack) [défaut]")
-    choice = input("Ton choix (1/2/3/4) : ").strip()
+    print("4. Stacking (stack) [default]")
+    choice = input("Your choice (1/2/3/4): ").strip()
     mapping = {"1": "lgb", "2": "xgb", "3": "cat", "4": "stack"}
     return mapping.get(choice, "stack")
 
 # =============================================================================
-# 1. UTILITAIRES & LOGGING
+# 2. Utilities & Logging (`save_experiment`)
 # =============================================================================
 
 def save_experiment(cv_score, params_dict, description, submission_df=None, folder='experiments'):
     """
-    Sauvegarde la config de l'expérience (JSON).
-    Si un submission_df est fourni, sauvegarde aussi le CSV.
+    Saves the experiment configuration (JSON) and the submission file if validated.
+    See Section 2 of `EXPLICATION_FOOTBALL_PY.md`.
     """
     os.makedirs(folder, exist_ok=True)
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = f"cv{cv_score:.4f}_{timestamp}"
     
-    # 1. Sauvegarde de la Config (JSON)
+    # 1. Save Config (JSON)
     config_filename = f"{folder}/conf_{base_name}.json"
     log_data = {
         "timestamp": timestamp,
@@ -87,16 +98,16 @@ def save_experiment(cv_score, params_dict, description, submission_df=None, fold
     with open(config_filename, 'w') as f:
         json.dump(log_data, f, indent=4)
     
-    print(f"\n[LOG] Config sauvegardée : {config_filename}")
+    print(f"\n[INFO] Config saved: {config_filename}")
 
-    # 2. Sauvegarde du CSV (Seulement si le run est validé)
+    # 2. Save CSV (If validated)
     if submission_df is not None:
-        # Sauvegarde version brute (experiments)
+        # Raw version
         csv_filename = f"{folder}/sub_{base_name}.csv"
         submission_df.to_csv(csv_filename, index=False)
-        print(f"[LOG] CSV Expérience sauvegardé : {csv_filename}")
+        print(f"[INFO] Experiment CSV saved: {csv_filename}")
         
-        # Sauvegarde version "Submission" incrémentale (pour upload facile)
+        # Incremental version for submission
         os.makedirs('submission', exist_ok=True)
         existing_files = glob.glob('submission/submission_V*.csv')
         version = 1
@@ -111,14 +122,14 @@ def save_experiment(cv_score, params_dict, description, submission_df=None, fold
         
         final_filename = f'submission/submission_V{version}.csv'
         submission_df.to_csv(final_filename, index=False)
-        print(f"🚀 PRÊT À SOUMETTRE : '{final_filename}'")
+        print(f"[SUCCESS] Ready for submission: '{final_filename}'")
 
 # =============================================================================
-# 2. CHARGEMENT DES DONNÉES
+# 3. Data Loading (`load_data`)
 # =============================================================================
 
 def load_data(base_path='data/'):
-    print("--- Chargement des données ---")
+    print("--- Loading Data ---")
     # Train
     x_train_team_home = pd.read_csv(f'{base_path}Train_Data/train_home_team_statistics_df.csv')
     x_train_team_away = pd.read_csv(f'{base_path}Train_Data/train_away_team_statistics_df.csv')
@@ -137,46 +148,52 @@ def load_data(base_path='data/'):
             x_test_team_home, x_test_team_away, x_test_player_home, x_test_player_away)
 
 # =============================================================================
-# 3. FEATURE ENGINEERING
+# 4. Feature Engineering
 # =============================================================================
 
 def aggregate_players_by_position(player_df, prefix):
     """
-    VERSION SIMPLE (V2) : Mean et Sum uniquement.
-     Agrégation par position des joueurs."""
+    4.1 Player Aggregation
+    Aggregates player statistics by position (Mean and Sum).
+    """
     numeric_cols = player_df.select_dtypes(include=[np.number]).columns.tolist()
     if 'ID' not in numeric_cols: numeric_cols.append('ID')
     
-    # Agrégation standard (Mean + Sum)
     cols_to_use = numeric_cols + ['POSITION']
+    #For every match and position, compute mean and sum of numeric stats
     pivot_df = player_df[cols_to_use].groupby(['ID', 'POSITION']).agg(['mean', 'sum'])
-    
+    # Flatten MultiIndex columns
     pivot_df.columns = [f'{c[0]}_{c[1]}' for c in pivot_df.columns]
     flat_df = pivot_df.unstack(level='POSITION')
+    # Rename columns to include prefix and position
     flat_df.columns = [f'{prefix}_{pos}_{col}' for col, pos in flat_df.columns]
     flat_df.reset_index(inplace=True)
     flat_df.fillna(0, inplace=True)
     return flat_df
 
-def build_features_v2(team_home, team_away, player_home, player_away):
-    print("--- Construction des features (Raw) ---")
+def build_features(team_home, team_away, player_home, player_away):
+    """
+    4.2 Advanced Construction (`build_features_v2`)
+    Combines data, calculates ratios, smart deltas, and performs cleaning.
+    """
+    print("--- Feature Construction ---")
     
-    # 1. Agrégation SIMPLE
+    # 4.2.1 Fusions
     p_home_agg = aggregate_players_by_position(player_home, 'P_HOME')
     p_away_agg = aggregate_players_by_position(player_away, 'P_AWAY')
-    
+    # Merge team stats with aggregated player stats
     df = team_home.merge(team_away, on='ID', suffixes=('_HOME', '_AWAY'))
     df = df.merge(p_home_agg, on='ID', how='left')
     df = df.merge(p_away_agg, on='ID', how='left')
     df.fillna(0, inplace=True)
 
-    # 1.5 TEAM ADVANCED RATIOS / EFFICIENCIES (scopes: season_* and 5_last_match_*)
-    # Objectif: compléter les DELTA_ déjà générés avec des ratios et des métriques de qualité.
+    # 4.2.2 Ratios and Efficiencies
     EPS = 1e-6
     try:
+        # Safe division 
         def _safe_div(a, b):
             return a / (b + EPS)
-
+        # Helper to find scopes for a given metric prefix
         def _scopes(metric_prefix: str):
             scopes = set()
             for c in df.columns:
@@ -190,19 +207,13 @@ def build_features_v2(team_home, team_away, player_home, player_away):
         def _col(base: str, side: str):
             return f"{base}_{side}"
 
-        # --- Ratios simples (Home/Away) sur quelques signaux robustes ---
+        # Simple Ratios Home/Away
         ratio_metrics = [
-            'TEAM_BALL_POSSESSION',
-            'TEAM_ATTACKS',
-            'TEAM_DANGEROUS_ATTACKS',
-            'TEAM_SHOTS_TOTAL',
-            'TEAM_SHOTS_ON_TARGET',
-            'TEAM_SHOTS_INSIDEBOX',
-            'TEAM_PASSES',
-            'TEAM_SUCCESSFUL_PASSES',
-            'TEAM_CORNERS',
+            'TEAM_BALL_POSSESSION', 'TEAM_ATTACKS', 'TEAM_DANGEROUS_ATTACKS',
+            'TEAM_SHOTS_TOTAL', 'TEAM_SHOTS_ON_TARGET', 'TEAM_SHOTS_INSIDEBOX',
+            'TEAM_PASSES', 'TEAM_SUCCESSFUL_PASSES', 'TEAM_CORNERS'
         ]
-
+        # Compute ratios
         for m in ratio_metrics:
             for sc in _scopes(m):
                 base = f"{m}_{sc}"
@@ -210,100 +221,86 @@ def build_features_v2(team_home, team_away, player_home, player_away):
                 if h in df.columns and a in df.columns:
                     df[f'RATIO_{base}'] = _safe_div(df[h], df[a])
 
-        # --- Possession share (Home / (Home + Away)) ---
+        # Possession Share
         for sc in _scopes('TEAM_BALL_POSSESSION'):
             base = f"TEAM_BALL_POSSESSION_{sc}"
             h, a = _col(base, 'HOME'), _col(base, 'AWAY')
             if h in df.columns and a in df.columns:
                 df[f'HOME_POSSESSION_SHARE_{sc}'] = _safe_div(df[h], df[h] + df[a])
 
-        # --- Efficiences / Qualité par scope ---
+        # Advanced Metrics (Conversion, Accuracy, Danger)
+        all_metrics = ['TEAM_SHOTS_TOTAL', 'TEAM_SHOTS_ON_TARGET', 'TEAM_SHOTS_INSIDEBOX', 'TEAM_GOALS',
+                  'TEAM_ATTACKS', 'TEAM_DANGEROUS_ATTACKS', 'TEAM_PASSES', 'TEAM_SUCCESSFUL_PASSES', 'TEAM_SAVES']
+        # Gather all scopes available in the data for these metrics (_season_sum, _last_5_games_avg)
         all_scopes = set()
-        for m in ['TEAM_SHOTS_TOTAL', 'TEAM_SHOTS_ON_TARGET', 'TEAM_SHOTS_INSIDEBOX', 'TEAM_GOALS',
-                  'TEAM_ATTACKS', 'TEAM_DANGEROUS_ATTACKS', 'TEAM_PASSES', 'TEAM_SUCCESSFUL_PASSES', 'TEAM_SAVES']:
+        for m in all_metrics:
             all_scopes |= set(_scopes(m))
         all_scopes = sorted(all_scopes)
 
         for sc in all_scopes:
-            shots = f"TEAM_SHOTS_TOTAL_{sc}"
-            sot = f"TEAM_SHOTS_ON_TARGET_{sc}"
-            inside = f"TEAM_SHOTS_INSIDEBOX_{sc}"
-            goals = f"TEAM_GOALS_{sc}"
-            attacks = f"TEAM_ATTACKS_{sc}"
-            dang = f"TEAM_DANGEROUS_ATTACKS_{sc}"
-            passes = f"TEAM_PASSES_{sc}"
-            succ = f"TEAM_SUCCESSFUL_PASSES_{sc}"
-            saves = f"TEAM_SAVES_{sc}"
-
-            h_shots, a_shots = _col(shots, 'HOME'), _col(shots, 'AWAY')
-            h_sot, a_sot = _col(sot, 'HOME'), _col(sot, 'AWAY')
-            h_inside, a_inside = _col(inside, 'HOME'), _col(inside, 'AWAY')
-            h_goals, a_goals = _col(goals, 'HOME'), _col(goals, 'AWAY')
-            h_att, a_att = _col(attacks, 'HOME'), _col(attacks, 'AWAY')
-            h_dang, a_dang = _col(dang, 'HOME'), _col(dang, 'AWAY')
-            h_pass, a_pass = _col(passes, 'HOME'), _col(passes, 'AWAY')
-            h_succ, a_succ = _col(succ, 'HOME'), _col(succ, 'AWAY')
-            h_saves, a_saves = _col(saves, 'HOME'), _col(saves, 'AWAY')
-
-            # Shot accuracy: SOT / total
-            if h_sot in df.columns and h_shots in df.columns:
-                df[f'HOME_SHOT_ACCURACY_{sc}'] = _safe_div(df[h_sot], df[h_shots])
-            if a_sot in df.columns and a_shots in df.columns:
-                df[f'AWAY_SHOT_ACCURACY_{sc}'] = _safe_div(df[a_sot], df[a_shots])
-            if f'HOME_SHOT_ACCURACY_{sc}' in df.columns and f'AWAY_SHOT_ACCURACY_{sc}' in df.columns:
+            # Column retrieval
+            cols = {m: (f"{m}_{sc}_HOME", f"{m}_{sc}_AWAY") for m in all_metrics}
+            
+            # Shot Accuracy
+            if cols['TEAM_SHOTS_ON_TARGET'][0] in df:
+                df[f'HOME_SHOT_ACCURACY_{sc}'] = _safe_div(df[cols['TEAM_SHOTS_ON_TARGET'][0]], df[cols['TEAM_SHOTS_TOTAL'][0]])
+            if cols['TEAM_SHOTS_ON_TARGET'][1] in df:
+                df[f'AWAY_SHOT_ACCURACY_{sc}'] = _safe_div(df[cols['TEAM_SHOTS_ON_TARGET'][1]], df[cols['TEAM_SHOTS_TOTAL'][1]])
+            if f'HOME_SHOT_ACCURACY_{sc}' in df:
                 df[f'DELTA_SHOT_ACCURACY_{sc}'] = df[f'HOME_SHOT_ACCURACY_{sc}'] - df[f'AWAY_SHOT_ACCURACY_{sc}']
 
-            # Conversion: goals / total
-            if h_goals in df.columns and h_shots in df.columns:
-                df[f'HOME_CONVERSION_{sc}'] = _safe_div(df[h_goals], df[h_shots])
-            if a_goals in df.columns and a_shots in df.columns:
-                df[f'AWAY_CONVERSION_{sc}'] = _safe_div(df[a_goals], df[a_shots])
-            if f'HOME_CONVERSION_{sc}' in df.columns and f'AWAY_CONVERSION_{sc}' in df.columns:
+            # Conversion Rate
+            if cols['TEAM_GOALS'][0] in df:
+                df[f'HOME_CONVERSION_{sc}'] = _safe_div(df[cols['TEAM_GOALS'][0]], df[cols['TEAM_SHOTS_TOTAL'][0]])
+            if cols['TEAM_GOALS'][1] in df:
+                df[f'AWAY_CONVERSION_{sc}'] = _safe_div(df[cols['TEAM_GOALS'][1]], df[cols['TEAM_SHOTS_TOTAL'][1]])
+            if f'HOME_CONVERSION_{sc}' in df:
                 df[f'DELTA_CONVERSION_{sc}'] = df[f'HOME_CONVERSION_{sc}'] - df[f'AWAY_CONVERSION_{sc}']
 
-            # Inside box share
-            if h_inside in df.columns and h_shots in df.columns:
-                df[f'HOME_INSIDEBOX_SHARE_{sc}'] = _safe_div(df[h_inside], df[h_shots])
-            if a_inside in df.columns and a_shots in df.columns:
-                df[f'AWAY_INSIDEBOX_SHARE_{sc}'] = _safe_div(df[a_inside], df[a_shots])
-            if f'HOME_INSIDEBOX_SHARE_{sc}' in df.columns and f'AWAY_INSIDEBOX_SHARE_{sc}' in df.columns:
+            # Inside Box Share
+            if cols['TEAM_SHOTS_INSIDEBOX'][0] in df:
+                df[f'HOME_INSIDEBOX_SHARE_{sc}'] = _safe_div(df[cols['TEAM_SHOTS_INSIDEBOX'][0]], df[cols['TEAM_SHOTS_TOTAL'][0]])
+            if cols['TEAM_SHOTS_INSIDEBOX'][1] in df:
+                df[f'AWAY_INSIDEBOX_SHARE_{sc}'] = _safe_div(df[cols['TEAM_SHOTS_INSIDEBOX'][1]], df[cols['TEAM_SHOTS_TOTAL'][1]])
+            if f'HOME_INSIDEBOX_SHARE_{sc}' in df:
                 df[f'DELTA_INSIDEBOX_SHARE_{sc}'] = df[f'HOME_INSIDEBOX_SHARE_{sc}'] - df[f'AWAY_INSIDEBOX_SHARE_{sc}']
 
-            # Danger ratio: dangerous attacks / attacks
-            if h_dang in df.columns and h_att in df.columns:
-                df[f'HOME_DANGER_RATIO_{sc}'] = _safe_div(df[h_dang], df[h_att])
-            if a_dang in df.columns and a_att in df.columns:
-                df[f'AWAY_DANGER_RATIO_{sc}'] = _safe_div(df[a_dang], df[a_att])
-            if f'HOME_DANGER_RATIO_{sc}' in df.columns and f'AWAY_DANGER_RATIO_{sc}' in df.columns:
+            # Danger Ratio
+            if cols['TEAM_DANGEROUS_ATTACKS'][0] in df:
+                df[f'HOME_DANGER_RATIO_{sc}'] = _safe_div(df[cols['TEAM_DANGEROUS_ATTACKS'][0]], df[cols['TEAM_ATTACKS'][0]])
+            if cols['TEAM_DANGEROUS_ATTACKS'][1] in df:
+                df[f'AWAY_DANGER_RATIO_{sc}'] = _safe_div(df[cols['TEAM_DANGEROUS_ATTACKS'][1]], df[cols['TEAM_ATTACKS'][1]])
+            if f'HOME_DANGER_RATIO_{sc}' in df:
                 df[f'DELTA_DANGER_RATIO_{sc}'] = df[f'HOME_DANGER_RATIO_{sc}'] - df[f'AWAY_DANGER_RATIO_{sc}']
 
-            # Pass completion: successful passes / passes
-            if h_succ in df.columns and h_pass in df.columns:
-                df[f'HOME_PASS_COMPLETION_{sc}'] = _safe_div(df[h_succ], df[h_pass])
-            if a_succ in df.columns and a_pass in df.columns:
-                df[f'AWAY_PASS_COMPLETION_{sc}'] = _safe_div(df[a_succ], df[a_pass])
-            if f'HOME_PASS_COMPLETION_{sc}' in df.columns and f'AWAY_PASS_COMPLETION_{sc}' in df.columns:
+            # Pass Completion
+            if cols['TEAM_SUCCESSFUL_PASSES'][0] in df:
+                df[f'HOME_PASS_COMPLETION_{sc}'] = _safe_div(df[cols['TEAM_SUCCESSFUL_PASSES'][0]], df[cols['TEAM_PASSES'][0]])
+            if cols['TEAM_SUCCESSFUL_PASSES'][1] in df:
+                df[f'AWAY_PASS_COMPLETION_{sc}'] = _safe_div(df[cols['TEAM_SUCCESSFUL_PASSES'][1]], df[cols['TEAM_PASSES'][1]])
+            if f'HOME_PASS_COMPLETION_{sc}' in df:
                 df[f'DELTA_PASS_COMPLETION_{sc}'] = df[f'HOME_PASS_COMPLETION_{sc}'] - df[f'AWAY_PASS_COMPLETION_{sc}']
 
-            # Cross attaque vs défense (shots on target vs saves)
-            if h_sot in df.columns and a_saves in df.columns:
-                df[f'CROSS_HOME_SOT_minus_AWAY_SAVES_{sc}'] = df[h_sot] - df[a_saves]
-            if a_sot in df.columns and h_saves in df.columns:
-                df[f'CROSS_AWAY_SOT_minus_HOME_SAVES_{sc}'] = df[a_sot] - df[h_saves]
+            # Attack vs Defense (Shots on Target vs Saves)
+            if cols['TEAM_SHOTS_ON_TARGET'][0] in df and cols['TEAM_SAVES'][1] in df:
+                df[f'CROSS_HOME_SOT_minus_AWAY_SAVES_{sc}'] = df[cols['TEAM_SHOTS_ON_TARGET'][0]] - df[cols['TEAM_SAVES'][1]]
+            if cols['TEAM_SHOTS_ON_TARGET'][1] in df and cols['TEAM_SAVES'][0] in df:
+                df[f'CROSS_AWAY_SOT_minus_HOME_SAVES_{sc}'] = df[cols['TEAM_SHOTS_ON_TARGET'][1]] - df[cols['TEAM_SAVES'][0]]
 
-            # Saves per SOT faced (approx)
-            if h_saves in df.columns and a_sot in df.columns:
-                df[f'HOME_SAVES_PER_SOT_FACED_{sc}'] = _safe_div(df[h_saves], df[a_sot])
-            if a_saves in df.columns and h_sot in df.columns:
-                df[f'AWAY_SAVES_PER_SOT_FACED_{sc}'] = _safe_div(df[a_saves], df[h_sot])
-            if f'HOME_SAVES_PER_SOT_FACED_{sc}' in df.columns and f'AWAY_SAVES_PER_SOT_FACED_{sc}' in df.columns:
+            # Saves per SOT faced
+            if cols['TEAM_SAVES'][0] in df and cols['TEAM_SHOTS_ON_TARGET'][1] in df:
+                df[f'HOME_SAVES_PER_SOT_FACED_{sc}'] = _safe_div(df[cols['TEAM_SAVES'][0]], df[cols['TEAM_SHOTS_ON_TARGET'][1]])
+            if cols['TEAM_SAVES'][1] in df and cols['TEAM_SHOTS_ON_TARGET'][0] in df:
+                df[f'AWAY_SAVES_PER_SOT_FACED_{sc}'] = _safe_div(df[cols['TEAM_SAVES'][1]], df[cols['TEAM_SHOTS_ON_TARGET'][0]])
+            if f'HOME_SAVES_PER_SOT_FACED_{sc}' in df:
                 df[f'DELTA_SAVES_PER_SOT_FACED_{sc}'] = df[f'HOME_SAVES_PER_SOT_FACED_{sc}'] - df[f'AWAY_SAVES_PER_SOT_FACED_{sc}']
-    except:
+
+    except Exception:
         pass
 
-
-    # 3. SMART DELTAS (Physique & Créativité)
+    # 4.2.3 Smart Deltas (Physics & Creativity)
     try:
+        # Duel Striker vs Goalkeeper
         c_shot_h = [c for c in df.columns if 'P_HOME' in c and 'FORWARD' in c and 'SHOTS' in c and 'TARGET' in c and 'sum' in c]
         c_save_a = [c for c in df.columns if 'P_AWAY' in c and 'GOALKEEPER' in c and 'SAVES' in c and 'sum' in c]
         if c_shot_h and c_save_a: df['DUEL_ATT_H_GK_A'] = df[c_shot_h[0]] - df[c_save_a[0]]
@@ -312,37 +309,37 @@ def build_features_v2(team_home, team_away, player_home, player_away):
         c_save_h = [c for c in df.columns if 'P_HOME' in c and 'GOALKEEPER' in c and 'SAVES' in c and 'sum' in c]
         if c_shot_a and c_save_h: df['DUEL_ATT_A_GK_H'] = df[c_shot_a[0]] - df[c_save_h[0]]
 
+        # Physical Dominance (Duels)
         col_duel = 'PLAYER_DUELS_WON'
         cols_duels_h = [c for c in df.columns if 'P_HOME' in c and col_duel in c and 'sum' in c]
         cols_duels_a = [c for c in df.columns if 'P_AWAY' in c and col_duel in c and 'sum' in c]
         if cols_duels_h: df['PHYSICAL_DOMINANCE'] = df[cols_duels_h].sum(axis=1) - df[cols_duels_a].sum(axis=1)
 
+        # Creativity (Key Passes)
         col_key = 'PLAYER_KEY_PASSES'
         cols_key_h = [c for c in df.columns if 'P_HOME' in c and col_key in c and 'sum' in c]
         cols_key_a = [c for c in df.columns if 'P_AWAY' in c and col_key in c and 'sum' in c]
         if cols_key_h: df['CREATIVITY_DIFF'] = df[cols_key_h].sum(axis=1) - df[cols_key_a].sum(axis=1)
-    except: pass
+    except Exception: pass
 
-    # 4. Deltas Classiques
+    # 4.2.4 Classic Deltas (Home - Away)
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     base_features = set([c.replace('_HOME', '') for c in numeric_cols if '_HOME' in c])
     for col in base_features:
         col_h, col_a = f"{col}_HOME", f"{col}_AWAY"
         if col_h in df.columns and col_a in df.columns: df[f'DELTA_{col}'] = df[col_h] - df[col_a]
 
-    # 4.1 Nettoyage ciblé de deltas (data-driven)
-    # D'après l'ablation (CV 5-fold x 3) sur ton dataset: certains deltas "season_sum" sur W/L
-    # semblent ajouter du bruit / sur-apprentissage.
+    # 4.2.5 Targeted Removal
     deltas_to_drop = [
         'DELTA_TEAM_GAME_WON_season_sum',
         'DELTA_TEAM_GAME_LOST_season_sum',
     ]
     df.drop(columns=[c for c in deltas_to_drop if c in df.columns], inplace=True)
 
-    # 5. NETTOYAGE BASIQUE (Pas de corrélation ici !)
-    df = df.loc[:, (df != 0).any(axis=0)]
+    # 4.2.6 Basic Cleaning
+    df = df.loc[:, (df != 0).any(axis=0)] # Remove columns with all 0s
     zeros = (df == 0).mean()
-    df = df.loc[:, zeros < 0.995]
+    df = df.loc[:, zeros < 0.995] # Remove quasi-empty columns
     df = df.loc[:, ~df.columns.duplicated()]
     
     cols_to_drop = df.select_dtypes(include=['object']).columns
@@ -354,96 +351,65 @@ def build_features_v2(team_home, team_away, player_home, player_away):
     return df
 
 # =============================================================================
-# 4. FONCTIONS OPTIMISATION ((Non) utilisées dans le pipeline principal pour le moment)
-# =============================================================================
-
-def objective_lgb(trial, X, y):
-    # Fonction prête à l'emploi si besoin de relancer Optuna
-    param = {
-        'objective': 'multiclass', 'metric': 'multi_logloss', 'verbosity': -1,
-        'boosting_type': 'gbdt', 'num_class': 3, 'n_estimators': 1000,
-        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
-        'num_leaves': trial.suggest_int('num_leaves', 20, 300),
-        'max_depth': trial.suggest_int('max_depth', 3, 12),
-        'min_child_samples': trial.suggest_int('min_child_samples', 5, 100),
-        'subsample': trial.suggest_float('subsample', 0.4, 1.0),
-        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.4, 1.0),
-        'n_jobs': -1
-    }
-    cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
-    estimator = cast(BaseEstimator, lgb.LGBMClassifier(**param))
-
-    scores = cross_val_score(estimator, X, y, cv=cv, scoring='accuracy', n_jobs=-1)
-    return scores.mean()
-
-# =============================================================================
-# 5. PIPELINE D'EXÉCUTION PRINCIPAL
+# 5. Main Pipeline (`if __name__ == "__main__":`)
 # =============================================================================
 
 if __name__ == "__main__":
 
     args = _parse_args()
     
-    # --- A. Chargement ---
+    # --- 5.A Data Preparation ---
     (xt_h, xt_a, xp_h, xp_a, y_train_raw, y_supp, 
      xtest_h, xtest_a, xpt_h, xpt_a) = load_data()
 
-    # --- B. Construction Features ---
-    X_train = build_features_v2(xt_h, xt_a, xp_h, xp_a)
-    X_test = build_features_v2(xtest_h, xtest_a, xpt_h, xpt_a)
-    print(f"Dimensions avant alignement : Train={X_train.shape}, Test={X_test.shape}")
+    # --- 5.A Data Preparation (Feature Construction) ---
+    X_train = build_features(xt_h, xt_a, xp_h, xp_a)
+    X_test = build_features(xtest_h, xtest_a, xpt_h, xpt_a)
+    print(f"Initial Dimensions : Train={X_train.shape}, Test={X_test.shape}")
     
-    # --- 1. NETTOYAGE CORRÉLATION CENTRALISÉ (La correction critique) ---
-    # On calcule uniquement sur le TRAIN pour ne pas tricher
-    print("Construction de la matrice de corrélation sur le TRAIN...")
+    # --- 5.B Cleaning and Feature Selection ---
     
-    # On exclut 'ID' du calcul pour ne pas le virer par erreur
+    # 5.B.1 Correlation Removal
+    print("Correlation Analysis (Train set)...")
+    
     features_for_corr = X_train.drop(columns=['ID'], errors='ignore').select_dtypes(include=[np.number])
-    
     corr_matrix = features_for_corr.corr().abs()
+    #  Select upper triangle of correlation matrix
     upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
     
-    # Liste des colonnes à supprimer (Corr > 0.95)
     to_drop = [column for column in upper.columns if any(upper[column] > 0.95)]
-    print(f"📉 Suppression de {len(to_drop)} colonnes corrélées (Train & Test)...")
+    print(f"📉 Removing {len(to_drop)} correlated columns (>0.95)...")
     
-    # ON APPLIQUE LA SUPPRESSION SUR LES DEUX
     X_train.drop(columns=to_drop, errors='ignore', inplace=True)
     X_test.drop(columns=to_drop, errors='ignore', inplace=True)
 
-    # --- 2. ALIGNEMENT ET NETTOYAGE ID (Ton code adapté) ---
-    # L'alignement va maintenant gérer proprement les petits écarts restants 
-    # (ex: une colonne vide dans Test mais pas dans Train qui aurait survécu au nettoyage basique)
-    print("Alignement final des colonnes...")
-    X_train, X_test = X_train.align(X_test, join='inner', axis=1)
+    # 5.B.2 Alignment Train/Test
+    print("Column Alignment...")
     
-    print(f"✅ Dimensions SYNCHRONISÉES : Train={X_train.shape}, Test={X_test.shape}")
+    X_train, X_test = X_train.align(X_test, join='inner', axis=1)
+    print(f"✅ Synchronized Dimensions : Train={X_train.shape}, Test={X_test.shape}")
 
-    # Sauvegarde et suppression ID
+    # Handling ID
     if 'ID' in X_test.columns:
         ID_test = X_test['ID']
     else:
-        # Cas rare où l'ID serait passé en index lors de l'align
         ID_test = X_test.index 
         
     X_train = X_train.drop(columns=['ID'], errors='ignore')
     X_test = X_test.drop(columns=['ID'], errors='ignore')
 
-    # Targets
+    # 5.B.3 Target Encoding
     y_classes = y_train_raw[['AWAY_WINS', 'DRAW', 'HOME_WINS']].idxmax(axis=1)
     le = LabelEncoder()
+    # Encode target classes for classification
     y_train_cls = le.fit_transform(y_classes) # 0:AWAY, 1:DRAW, 2:HOME
     y_train_reg = y_supp['GOAL_DIFF_HOME_AWAY']
 
-    print(f"Shape finale Train: {X_train.shape}")
-
-    # --- B.3 Feature Selection Top-K (data-driven, K=800) ---
-    # Motivation: ton benchmark delta_tree_eval (5 folds x 3 repeats) montre qu'un topK-only
-    # basé sur les importances améliore nettement le score tout en réduisant la dimension.
+    # 5.B.4 Top-K Selection
     USE_TOPK_FEATURES = True
     TOPK_FEATURES = 800
     if USE_TOPK_FEATURES:
-        print(f"--- Sélection Top-{TOPK_FEATURES} features (LightGBM gain importance) ---")
+        print(f"--- Top-{TOPK_FEATURES} Features Selection (LightGBM Importance) ---")
         selector_model = lgb.LGBMClassifier(
             n_estimators=2000,
             learning_rate=0.02,
@@ -463,49 +429,26 @@ if __name__ == "__main__":
         imp_df.sort_values('importance_gain', ascending=False, inplace=True)
         keep = imp_df['feature'].head(min(TOPK_FEATURES, imp_df.shape[0])).tolist()
 
-        # Filtre train/test
         X_train = X_train[keep].copy()
         X_test = X_test[keep].copy()
-        print(f"✅ Après TopK: Train={X_train.shape}, Test={X_test.shape}")
+        print(f"✅ After Selection : Train={X_train.shape}, Test={X_test.shape}")
 
-    # --- C. Target Auxiliaire (Goal Diff) ---
-    print("--- Ajout Feature Auxiliaire (Goal Diff) ---")
+    # --- 5.C Auxiliary Feature (Goal Diff) ---
+    print("--- Adding Auxiliary Feature (Stacking Goal Diff) ---")
     regressor = CatBoostRegressor(iterations=500, learning_rate=0.05, depth=6, verbose=0, random_state=42)
-    # Feature 'PRED_GOAL_DIFF' pour le Train (via Cross Validation pour éviter fuite)
+    
+    # Train: Cross Val predict to avoid leakage
     X_train['PRED_GOAL_DIFF'] = cross_val_predict(cast(BaseEstimator, regressor), X_train, y_train_reg, cv=5, n_jobs=-1)
-    # Feature 'PRED_GOAL_DIFF' pour le Test (via entraînement complet)
+    
+    # Test: Fit on full train and predict
     regressor.fit(X_train.drop(columns=['PRED_GOAL_DIFF']), y_train_reg)
     X_test['PRED_GOAL_DIFF'] = regressor.predict(X_test)
 
-    # # --- D. Feature Selection (Optionnel - Désactivé par défaut) ---
-    # if True: # Mettre True pour activer
-    #     print("Démarrage de la sélection des features...")
-    #     selector = lgb.LGBMClassifier(n_estimators=100, learning_rate=0.1, n_jobs=-1, verbose=-1)
-    #     selector.fit(X_train, y_train_cls)
-    #     model_selector = SelectFromModel(selector, prefit=True, threshold="1.25*mean")
-    #     # 3. On sauvegarde les noms des colonnes avant transformation (pour info)
-    #     original_cols = X_train.columns
-    #     n_original = X_train.shape[1]
-    #     X_train_selected = model_selector.transform(X_train)
-    #     X_test_selected = model_selector.transform(X_test)
-    #     selected_mask = model_selector.get_support()
-    #     selected_columns = original_cols[selected_mask]
-    #     X_train = pd.DataFrame(cast(np.ndarray, X_train_selected), columns=selected_columns)
-    #     X_test = pd.DataFrame(cast(np.ndarray, X_test_selected), columns=selected_columns)
-
-    #     print(f"✅ Nettoyage terminé : Passage de {n_original} à {X_train.shape[1]} features.")
-    #     print(f"Les features conservées sont les plus pertinentes pour la victoire.")
-
-    # --- E. Configuration des Modèles ---
-    # Si tu veux relancer Optuna, décommente les lignes ci-dessous :
-    # study = optuna.create_study(direction='maximize')
-    # study.optimize(lambda trial: objective_lgb(trial, X_train, y_train_cls), n_trials=30)
-    # best_params_lgb = study.best_params
-    # print("Best Params:", best_params_lgb)
-
+    # --- 5.D Model Construction ---
     model_choice = args.model or _prompt_model_choice()
-    print(f"\n✅ Modèle choisi: {model_choice}")
+    print(f"\n✅ Selected Model : {model_choice}")
 
+    # Optimized Parameters
     params_lgb = {
         'n_estimators': 675, 'learning_rate': 0.006921430104787609, 'num_leaves': 96, 
         'colsample_bytree': 0.7349031047131501, 'subsample': 0.9451510441002412, 'random_state': 42,
@@ -526,18 +469,17 @@ if __name__ == "__main__":
         'allow_writing_files': False
     }
     
-    # Description pour le log
     run_description = f"V2 Features - TopK=800 - PRED_GOAL_DIFF - model={model_choice}"
     experiment_params = {
         "model": model_choice,
         "lgb": params_lgb,
         "xgb": params_xgb,
         "cat": params_cat,
-        "meta_features": "PRED_GOAL_DIFF (+ stacking OOF predict_proba si stack)",
+        "meta_features": "PRED_GOAL_DIFF"
     }
 
-    # --- F. Construction du Modèle ---
-    print("\n--- ÉTAPE 1 : Construction du Modèle ---")
+    # Model Initialization
+    print("\n--- Model Initialization ---")
 
     if model_choice == 'lgb':
         model = cast(_ProbClassifier, lgb.LGBMClassifier(**params_lgb))
@@ -546,6 +488,7 @@ if __name__ == "__main__":
     elif model_choice == 'cat':
         model = cast(_ProbClassifier, CatBoostClassifier(**params_cat))
     else:
+        # Stacking
         clf1 = lgb.LGBMClassifier(**params_lgb)
         clf2 = xgb.XGBClassifier(**params_xgb)
         clf3 = CatBoostClassifier(**params_cat)
@@ -568,47 +511,41 @@ if __name__ == "__main__":
             ),
         )
 
-    # --- Estimation Rapide (Hold-Out) ---
-    print("\n--- ÉTAPE 1 : Estimation Rapide du Score (1 seul run) ---")
+    # --- 5.E Validation and Training ---
     
-    # On coupe : 80% pour entraîner, 20% pour vérifier le score
+    # 5.E.1 Quick Score Estimation (Hold-Out 80/20)
+    print("\n--- 5.E.1 Score Estimation (Validation 20%) ---")
+    
     X_tr_part, X_val_part, y_tr_part, y_val_part = train_test_split(
         X_train, y_train_cls, test_size=0.2, random_state=42, stratify=y_train_cls
     )
     
-    print("Entraînement sur 80% des données pour estimation...")
     model.fit(X_tr_part, y_tr_part)
-    
-    # On teste sur la partie 'Validation'
     preds_val = model.predict(X_val_part)
-    mon_score_estime = accuracy_score(y_val_part, preds_val)
+    score_estime = accuracy_score(y_val_part, preds_val)
     
-    print(f"📊 Score estimé (Validation set 20%) : {mon_score_estime:.5f}")
+    print(f"📊 Validation Score : {score_estime:.5f}")
 
-    # --- G. Décision et Sauvegarde ---
-    
-    # Seuil pour passer en prod (à ajuster selon tes ambitions)
+    # 5.E.2 Decision (Gate)
     THRESHOLD_SCORE = 0.4850 
 
-    if mon_score_estime < THRESHOLD_SCORE:
-        print(f"\n❌ Score insuffisant (< {THRESHOLD_SCORE}). Arrêt du script.")
-        # ON SAUVEGARDE QUAND MÊME LA TRACE (JSON uniquement)
+    if score_estime < THRESHOLD_SCORE:
+        print(f"\n[INFO] Insufficient Score (< {THRESHOLD_SCORE}). Stopping.")
         save_experiment(
-            cv_score=mon_score_estime, 
+            cv_score=score_estime, 
             params_dict=experiment_params, 
             description=run_description,
-            submission_df=None # Pas de CSV généré
+            submission_df=None
         )
-        exit() # Fin du script
+        exit()
     else:
-        print(f"\n✅ Score validé ! Lancement de l'entraînement final.")
+        print(f"\n✅ Score Validated. Starting Final Training on 100% Data.")
 
-    # --- H. Entraînement Final & Prédictions ---
-    print("--- ÉTAPE 2 : Entraînement Final (100% Data) ---")
+    # 5.E.3 Final Training
     model.fit(X_train, y_train_cls)
     probs = np.asarray(model.predict_proba(X_test))
 
-    # --- I. Formatage Soumission ---
+    # --- 5.F Submission ---
     classes = getattr(model, 'classes_', np.array([0, 1, 2]))
     class_to_col = {int(c): i for i, c in enumerate(classes)}
     submission = pd.DataFrame({
@@ -617,19 +554,18 @@ if __name__ == "__main__":
         'DRAW': probs[:, class_to_col[1]],
         'AWAY_WINS': probs[:, class_to_col[0]],
     })
-    
-    # Conversion Binaire (Strict 0/1)
-    print("Conversion binaire...")
+
+    # Binary Conversion
+    print("Binary Conversion (Hard Voting)...")
     cols_submit = ['HOME_WINS', 'DRAW', 'AWAY_WINS']
     max_indices = submission[cols_submit].values.argmax(axis=1)
     hard_preds = np.zeros(submission[cols_submit].shape, dtype=int)
     hard_preds[np.arange(len(submission)), max_indices] = 1
     submission[cols_submit] = hard_preds
 
-    # --- J. Sauvegarde Finale (CSV + JSON) ---
     save_experiment(
-        cv_score=mon_score_estime, 
+        cv_score=score_estime, 
         params_dict=experiment_params, 
         description=run_description,
-        submission_df=submission # Le CSV sera généré
+        submission_df=submission
     )
