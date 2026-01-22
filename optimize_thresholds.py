@@ -9,6 +9,8 @@ en ajustant les probabilités brutes sorties du modèle.
 import pandas as pd
 import numpy as np
 import lightgbm as lgb
+import xgboost as xgb
+from catboost import CatBoostClassifier, CatBoostRegressor
 import optuna
 import os
 import re
@@ -16,9 +18,17 @@ import glob
 from sklearn.model_selection import StratifiedKFold, cross_val_predict
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import accuracy_score
-from catboost import CatBoostRegressor
 from sklearn.base import BaseEstimator
-from typing import cast
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import StackingClassifier
+from typing import cast, Protocol, Any
+
+# Protocol for type checking
+class _ProbClassifier(Protocol):
+    classes_: Any
+    def fit(self, X: Any, y: Any) -> Any: ...
+    def predict(self, X: Any) -> Any: ...
+    def predict_proba(self, X: Any) -> Any: ...
 
 # Import des fonctions depuis football_clean
 # Assurez-vous que football_clean.py est dans le même dossier
@@ -97,9 +107,10 @@ def get_processed_data():
 def objective_thresholds(trial, probas, y_true):
     # On cherche 3 multiplicateurs [w0, w1, w2] autour de 1.0
     # w_draw (indice 1) est souvent le plus critique à booster
-    w_away = trial.suggest_float('w_away', 0.8, 1.3)
-    w_draw = trial.suggest_float('w_draw', 0.9, 1.6) # On permet d'augmenter plus le nul
-    w_home = trial.suggest_float('w_home', 0.8, 1.3)
+    # On resserre les bornes pour éviter l'overfitting (Conservative Tuning)
+    w_away = trial.suggest_float('w_away', 0.95, 1.15)
+    w_draw = trial.suggest_float('w_draw', 0.95, 1.25) # Légère préférence pour booster le nul
+    w_home = trial.suggest_float('w_home', 0.95, 1.15)
     
     weights = np.array([w_away, w_draw, w_home])
     
@@ -114,32 +125,65 @@ def objective_thresholds(trial, probas, y_true):
 if __name__ == "__main__":
     X_train, y_train, X_test, ID_test, le_encoder = get_processed_data()
     
-    print("\n--- Entraînement Modèle pour Probabilités (LGBM) ---")
-    # Utilisation des hyperparamètres optimisés de football_clean.py
+    print("\n--- Construction du Stacking Model (LGBM + XGB + CatBoost) ---")
     params_lgb = {
-        'n_estimators': 1500, # Un peu boosté pour la précision
-        'learning_rate': 0.007, 
-        'num_leaves': 96, 
-        'colsample_bytree': 0.73, 
-        'subsample': 0.95, 
-        'random_state': 42,
-        'max_depth': 18, 
-        'n_jobs': -1, 
-        'verbose': -1,
-         # Ajout weight balance si besoin, mais on le fait post-hoc
+        'n_estimators': 675, 'learning_rate': 0.006921430104787609, 'num_leaves': 96, 
+        'colsample_bytree': 0.7349031047131501, 'subsample': 0.9451510441002412, 'random_state': 42,
+        'max_depth': 18, 'min_child_samples': 53,'n_jobs': -1, 'verbose': -1,'reg_alpha': 0.018217537238705006,
+        'reg_lambda': 8.02527438958144}
+    
+    params_xgb = {
+        'n_estimators': 463, 'learning_rate': 0.013621254775271107, 'max_depth': 3, 
+        'colsample_bytree': 0.5113398671313254, 'subsample': 0.5465452013828958, 'random_state': 42,
+        'eval_metric': 'mlogloss', 'tree_method': 'hist', 'n_jobs': -1,'gamma':2.3773484745997786,
+        'min_child_weight': 2,'reg_alpha': 0.7854236780369659, 'reg_lambda': 3.5901935424101845
     }
     
-    model = lgb.LGBMClassifier(**params_lgb)
+    params_cat = {
+        'iterations': 1041, 'learning_rate': 0.018811897562003008, 'depth': 10,
+        'l2_leaf_reg': 2.2707122819052272,'border_count': 101,'subsample': 0.7912439842621549,
+        'bootstrap_type': 'Bernoulli',
+        'random_strength': 2.2811358187843416,
+        'rsm': 0.6, 'verbose': 0, 'random_state': 42, 'thread_count': -1,
+        'allow_writing_files': False
+    }
+
+    # 2. Construction du Stacking
+    clf1 = lgb.LGBMClassifier(**params_lgb)
+    clf2 = xgb.XGBClassifier(**params_xgb)
+    clf3 = CatBoostClassifier(**params_cat)
     
-    # 1. Générer les probabilités Out-Of-Fold (OOF) sur le Train
-    # C'est CRITIQUE : on ne peut pas optimiser les seuils sur des probas "train" (trop confiantes)
-    # Il faut des probas qui ressemblent à celles du test.
-    print("Génération des probabilités OOF (Cross-Validation 5 folds)...")
+    estimators_list = [
+        ('lgb', cast(BaseEstimator, clf1)),
+        ('xgb', cast(BaseEstimator, clf2)),
+        ('cat', cast(BaseEstimator, clf3)),
+    ]
+    meta_learner = LogisticRegression(random_state=42, max_iter=1000)
+    
+    # Le modèle final complet
+    model = cast(
+        _ProbClassifier,
+        StackingClassifier(
+            estimators=estimators_list,
+            final_estimator=meta_learner,
+            cv=5,
+            stack_method='auto',
+            n_jobs=1,
+            passthrough=False,
+            verbose=1,
+        ),
+    )
+    
+    # 3. Génération OOF Probas (Attention c'est long : Stacking CV=5 sur Train)
+    print("Génération des probabilités OOF du Stacking (C'est long, patience...)...")
+    # Note: Le stacking fait déjà du CV interne. Ici on fait une CV externe pour récupérer
+    # des probabilités 'honnêtes' sur tout le X_train pour optimiser les seuils.
+    # Pour gagner du temps, on peut réduire le 'cv' externe à 3.
     oof_probas = cross_val_predict(
         model, 
         X_train, 
         y_train, 
-        cv=5, 
+        cv=5,  # Augmenté à 5 pour être cohérent avec le modèle final et réduire la variance
         method='predict_proba', 
         n_jobs=-1
     )
@@ -150,7 +194,7 @@ if __name__ == "__main__":
     # 2. Optimiser les seuils avec Optuna
     print("\n--- Optimisation des Seuils (Optuna) ---")
     study = optuna.create_study(direction='maximize')
-    study.optimize(lambda trial: objective_thresholds(trial, oof_probas, y_train), n_trials=100)
+    study.optimize(lambda trial: float(objective_thresholds(trial, oof_probas, y_train)), n_trials=100)
     
     best_weights = [
         study.best_params['w_away'], 
