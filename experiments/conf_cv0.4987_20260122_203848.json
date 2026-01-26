@@ -1,0 +1,11 @@
+{
+    "timestamp": "20260122_203848",
+    "cv_score": 0.4987401446801593,
+    "description": "LGBM Optimized Thresholds - Acc 0.4987 - Weights [1.04 1.11 0.96]",
+    "parameters": {
+        "w_away": 1.0364244066776516,
+        "w_draw": 1.1088050442444486,
+        "w_home": 0.963881251605214
+    },
+    "status": "COMPLETED"
+}

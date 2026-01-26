@@ -13,12 +13,12 @@ from typing import cast
 
 # Gestion des imports
 try:
-    from football import load_data, build_features_v2
+    from football_clean import load_data, build_features
 except ImportError:
     try:
-        from football import load_data, build_features_v2
+        from football import load_data, build_features
     except ImportError:
-        print("❌ Impossible d'importer load_data/build_features_v2 depuis football.py")
+        print("❌ Impossible d'importer load_data/build_features depuis football_clean.py")
         sys.exit()
 
 warnings.filterwarnings('ignore')
@@ -36,31 +36,40 @@ def prepare_training_matrix(
     add_pred_goal_diff: bool = True,
     random_state: int = 42,
 ):
-    (xt_h, xt_a, xp_h, xp_a, y_train_raw, y_supp, *_rest) = load_data()
+    print("--- 1. Chargement et Feature Construction (Train + Test pour Alignement) ---")
+    (xt_h, xt_a, xp_h, xp_a, y_train_raw, y_supp, 
+     xtest_h, xtest_a, xpt_h, xpt_a) = load_data()
 
-    print("Construction X_train (via football.build_features_v2)...")
-    X = build_features_v2(xt_h, xt_a, xp_h, xp_a)
+    # Construction via football_clean.build_features
+    X = build_features(xt_h, xt_a, xp_h, xp_a)
+    X_test = build_features(xtest_h, xtest_a, xpt_h, xpt_a)
 
     # Target classification
     y_classes = y_train_raw[['AWAY_WINS', 'DRAW', 'HOME_WINS']].idxmax(axis=1)
     le = LabelEncoder()
     y = le.fit_transform(y_classes)
 
-    # On enlève ID des features de training
-    X = X.drop(columns=['ID'], errors='ignore')
-
-    # Corr removal (uniquement sur train, pas de fuite car pas de test ici)
+    # 2. Nettoyage Corrélation
     if use_corr_removal:
-        print("Nettoyage Corrélation (train-only)...")
-        corr_matrix = X.select_dtypes(include=[np.number]).corr().abs()
+        print("Correlation Analysis (>0.95)...")
+        features_for_corr = X.drop(columns=['ID'], errors='ignore').select_dtypes(include=[np.number])
+        corr_matrix = features_for_corr.corr().abs()
         upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
         to_drop = [column for column in upper.columns if any(upper[column] > corr_threshold)]
         X.drop(columns=to_drop, errors='ignore', inplace=True)
-        print(f"📉 Corr: suppression de {len(to_drop)} colonnes (>{corr_threshold})")
+        X_test.drop(columns=to_drop, errors='ignore', inplace=True)
+        print(f"📉 Removing {len(to_drop)} correlated columns")
 
-    # TopK selection (LightGBM gain importance) - aligné football.py
+    # 3. Alignement (CRUCIAL pour matcher football_clean)
+    print("Alignement Train/Test...")
+    X, X_test = X.align(X_test, join='inner', axis=1)
+    
+    # Retrait ID après alignement
+    X = X.drop(columns=['ID'], errors='ignore')
+    
+    # 4. Top-K Selection
     if use_topk:
-        print(f"--- Sélection Top-{topk_features} features (LightGBM gain importance) ---")
+        print(f"--- Sélection Top-{topk_features} features (LightGBM gain) ---")
         selector_model = lgb.LGBMClassifier(
             n_estimators=2000,
             learning_rate=0.02,
@@ -82,7 +91,7 @@ def prepare_training_matrix(
         X = X[keep].copy()
         print(f"✅ Après TopK: X={X.shape}")
 
-    # PRED_GOAL_DIFF (meta-feature) - aligné football.py
+    # 5. PRED_GOAL_DIFF
     if add_pred_goal_diff:
         print("--- Ajout Feature Auxiliaire (PRED_GOAL_DIFF) ---")
         y_train_reg = y_supp['GOAL_DIFF_HOME_AWAY']
@@ -123,10 +132,10 @@ def optimize_lightgbm(trial, X, y):
         'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
         'reg_alpha': trial.suggest_float('reg_alpha', 0, 10),
         'reg_lambda': trial.suggest_float('reg_lambda', 0, 10),
-        'class_weight': 'balanced' # TRES IMPORTANT POUR LES NULS
+        # 'class_weight': 'balanced' # DISABLED to match football_clean pipeline
     }
     
-    cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
     # On optimise le neg_log_loss pour avoir de meilleures probabilités
     estimator = cast(BaseEstimator, lgb.LGBMClassifier(**params, n_jobs=1))
     scores = cross_val_score(estimator, X, y, cv=cv, scoring='neg_log_loss')
@@ -148,7 +157,7 @@ def optimize_xgboost(trial, X, y):
         # XGB n'a pas class_weight='balanced' direct, on peut le gérer autrement ou laisser faire
     }
     
-    cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
     estimator = cast(BaseEstimator, xgb.XGBClassifier(**params, n_jobs=1))
     scores = cross_val_score(estimator, X, y, cv=cv, scoring='neg_log_loss')
     return scores.mean()
@@ -165,11 +174,11 @@ def optimize_catboost(trial, X, y):
         'subsample': trial.suggest_float('subsample', 0.5, 1.0),
         'random_strength': trial.suggest_float('random_strength', 0, 5),
         'verbose': False,
-        'auto_class_weights': 'Balanced', # TRES IMPORTANT
+        # 'auto_class_weights': 'Balanced', # DISABLED to match football_clean pipeline
         'allow_writing_files': False # Évite de créer des dossiers catboost_info partout
     }
     
-    cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
     estimator = cast(BaseEstimator, CatBoostClassifier(**params, thread_count=1))
     scores = cross_val_score(estimator, X, y, cv=cv, scoring='neg_log_loss')
     return scores.mean()
@@ -209,7 +218,7 @@ if __name__ == "__main__":
         study.optimize(lambda trial: optimize_xgboost(trial, X, y), n_trials=100)
     elif choice == '3':
         print("\n🚀 Optimisation CatBoost en cours...")
-        study.optimize(lambda trial: optimize_catboost(trial, X, y), n_trials=30)
+        study.optimize(lambda trial: optimize_catboost(trial, X, y), n_trials=50)
     else:
         print("Choix invalide.")
         sys.exit()
