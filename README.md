@@ -85,4 +85,4 @@ L'architecture finale repose sur l'état de l'art en données tabulaires :
     Les fichiers de soumission sont générés automatiquement dans `submission/` si le score de validation dépasse le seuil de qualité défini.
 
 ---
-*Développé avec ❤️ sans code généré automatiquement.*
+*Projet réalisé pour le Data Challenge "Football : Qui va gagner ?" par QRT. Codé en Python sans génération automatique de code.*
