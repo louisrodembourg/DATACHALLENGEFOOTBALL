@@ -30,15 +30,21 @@ class _ProbClassifier(Protocol):
     def predict(self, X: Any) -> Any: ...
     def predict_proba(self, X: Any) -> Any: ...
 
-# Import des fonctions depuis football_clean
-# Assurez-vous que football_clean.py est dans le même dossier
+import sys
+import os
+
+# Proper path setup
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+sys.path.append(project_root)
+
+# Import des fonctions depuis src
 try:
-    from football_clean import load_data, build_features, save_experiment
+    from src.data import load_data
+    from src.features import build_features
+    from src.utils import save_experiment
 except ImportError:
-    try:
-        from football import load_data, build_features, save_experiment
-    except ImportError:
-        raise ImportError("Impossible d'importer load_data/build_features depuis football_clean.py")
+    raise ImportError("Impossible d'importer load_data/build_features depuis src/")
 
 # =============================================================================
 # 1. PRÉPARATION DES DONNÉES (Copie conforme du pipeline clean)

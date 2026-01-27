@@ -11,15 +11,21 @@ import sys
 from sklearn.base import BaseEstimator
 from typing import cast
 
+import sys
+import os
+
+# Proper path setup
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+sys.path.append(project_root)
+
 # Gestion des imports
 try:
-    from football_clean import load_data, build_features
+    from src.data import load_data
+    from src.features import build_features
 except ImportError:
-    try:
-        from football import load_data, build_features
-    except ImportError:
-        print("❌ Impossible d'importer load_data/build_features depuis football_clean.py")
-        sys.exit()
+    print("❌ Impossible d'importer load_data/build_features depuis src/")
+    sys.exit()
 
 warnings.filterwarnings('ignore')
 optuna.logging.set_verbosity(optuna.logging.INFO)

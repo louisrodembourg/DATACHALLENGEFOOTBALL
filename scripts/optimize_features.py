@@ -11,16 +11,19 @@ from sklearn.model_selection import StratifiedKFold, cross_val_score
 from sklearn.base import BaseEstimator
 from typing import cast
 
-# Import data loading and feature engineering from the main script
-# Ensure football_clean.py is in the same directory
+import sys
+import os
+
+# Proper path setup
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+sys.path.append(project_root)
+
 try:
-    from football_clean import load_data, build_features
+    from src.data import load_data
+    from src.features import build_features
 except ImportError:
-    # If football_clean.py was renamed to football.py
-    try:
-        from football import load_data, build_features_v2 as build_features
-    except ImportError:
-        raise ImportError("Could not import load_data and build_features from football_clean.py or football.py")
+    raise ImportError("Could not import load_data and build_features from src/")
 
 def prepare_data_for_optimization():
     print("--- Preparing Data for Optimization ---")

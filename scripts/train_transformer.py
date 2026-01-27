@@ -7,47 +7,19 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.model_selection import train_test_split
 import sys
-import math
+import os
 
-# Gestion des imports
+# Proper path setup
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+sys.path.append(project_root)
+
 try:
-    from football import load_data
+    from src.data import load_data
+    from src.features import build_features
 except ImportError:
-    try:
-        from football import load_data
-    except ImportError:
-        print("❌ Impossible de trouver load_data.")
-        sys.exit()
-
-# =============================================================================
-# 1. FEATURE ENGINEERING (Standard)
-# =============================================================================
-def aggregate_players_by_position(player_df, prefix):
-    player_df = player_df.loc[:, ~player_df.columns.duplicated()]
-    numeric_cols = player_df.select_dtypes(include=[np.number]).columns.tolist()
-    if 'ID' not in numeric_cols: numeric_cols.append('ID')
-    cols_to_use = numeric_cols + ['POSITION']
-    pivot_df = player_df[cols_to_use].groupby(['ID', 'POSITION']).agg(['mean', 'sum'])
-    pivot_df.columns = [f'{c[0]}_{c[1]}' for c in pivot_df.columns]
-    flat_df = pivot_df.unstack(level='POSITION')
-    flat_df.columns = [f'{prefix}_{pos}_{col}' for col, pos in flat_df.columns]
-    flat_df.reset_index(inplace=True)
-    flat_df.fillna(0, inplace=True)
-    return flat_df
-
-def build_features(xt_h, xt_a, xp_h, xp_a):
-    print("   -> Construction des features...")
-    p_home_agg = aggregate_players_by_position(xp_h, 'P_HOME')
-    p_away_agg = aggregate_players_by_position(xp_a, 'P_AWAY')
-    df = xt_h.merge(xt_a, on='ID', suffixes=('_HOME', '_AWAY'))
-    df = df.merge(p_home_agg, on='ID', how='left')
-    df = df.merge(p_away_agg, on='ID', how='left')
-    df.fillna(0, inplace=True)
-    drop_cols = ['LEAGUE_HOME', 'TEAM_NAME_HOME', 'LEAGUE_AWAY', 'TEAM_NAME_AWAY', 'LEAGUE', 'TEAM_NAME']
-    df.drop(columns=[c for c in drop_cols if c in df.columns], inplace=True)
-    cols_to_drop = df.select_dtypes(include=['object']).columns
-    if len(cols_to_drop) > 0: df.drop(columns=cols_to_drop, inplace=True)
-    return df
+    print("❌ Impossible d'importer load_data/build_features depuis src.")
+    sys.exit()
 
 # =============================================================================
 # 2. ARCHITECTURE TRANSFORMER (Le cœur du papier)
