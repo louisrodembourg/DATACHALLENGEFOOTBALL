@@ -85,12 +85,11 @@ def prepare_training_matrix(
             reg_lambda=1.0,
             random_state=random_state,
             n_jobs=-1,
-            verbose=-1,
-        )
+            verbose=-1,            importance_type='gain'        )
         selector_model.fit(X, y)
-        booster = selector_model.booster_
-        importances = booster.feature_importance(importance_type='gain')
-        feature_names = booster.feature_name()
+        # Use default feature_importances_ (split) to match run_pipeline.py
+        importances = selector_model.feature_importances_
+        feature_names = selector_model.feature_name_
         imp_df = pd.DataFrame({'feature': feature_names, 'importance_gain': importances})
         imp_df.sort_values('importance_gain', ascending=False, inplace=True)
         keep = imp_df['feature'].head(min(topk_features, imp_df.shape[0])).tolist()
@@ -138,7 +137,7 @@ def optimize_lightgbm(trial, X, y):
         'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
         'reg_alpha': trial.suggest_float('reg_alpha', 0, 10),
         'reg_lambda': trial.suggest_float('reg_lambda', 0, 10),
-        # 'class_weight': 'balanced' # DISABLED to match football_clean pipeline
+        'class_weight': trial.suggest_categorical('class_weight', [None, 'balanced'])
     }
     
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
@@ -180,7 +179,7 @@ def optimize_catboost(trial, X, y):
         'subsample': trial.suggest_float('subsample', 0.5, 1.0),
         'random_strength': trial.suggest_float('random_strength', 0, 5),
         'verbose': False,
-        # 'auto_class_weights': 'Balanced', # DISABLED to match football_clean pipeline
+        'auto_class_weights': trial.suggest_categorical('auto_class_weights', [None, 'Balanced']),
         'allow_writing_files': False # Évite de créer des dossiers catboost_info partout
     }
     
@@ -192,6 +191,16 @@ def optimize_catboost(trial, X, y):
 # =============================================================================
 # 🚀 MAIN RUN
 # =============================================================================
+
+def run_optimization(name, optimize_func, n_trials, X, y):
+    print(f"\n🚀 Optimisation {name} en cours...")
+    study = optuna.create_study(direction='maximize')
+    study.optimize(lambda trial: optimize_func(trial, X, y), n_trials=n_trials)
+    print(f"\n✅ {name} TERMINÉ !")
+    print(f"🏆 Meilleur Score (neg_log_loss) : {study.best_value:.5f}")
+    print("📝 Meilleurs Paramètres :")
+    print(study.best_params)
+    return study.best_params
 
 if __name__ == "__main__":
     print("--- ⚙️ OPTUNA LABO V2 (LogLoss Optimization) ---")
@@ -212,24 +221,25 @@ if __name__ == "__main__":
     print("1. LightGBM (Très Rapide)")
     print("2. XGBoost (Moyen)")
     print("3. CatBoost (Lent mais puissant)")
-    choice = input("Ton choix (1/2/3) : ")
+    print("4. TOUS (Séquentiel : LGB -> XGB -> CAT)")
+    choice = input("Ton choix (1/2/3/4) : ")
 
-    study = optuna.create_study(direction='maximize') # Maximize car neg_log_loss est négatif (ex: -0.9 est mieux que -1.1)
-    
     if choice == '1':
-        print("\n🚀 Optimisation LightGBM en cours...")
-        study.optimize(lambda trial: optimize_lightgbm(trial, X, y), n_trials=100)
+        run_optimization("LightGBM", optimize_lightgbm, 50, X, y)
     elif choice == '2':
-        print("\n🚀 Optimisation XGBoost en cours...")
-        study.optimize(lambda trial: optimize_xgboost(trial, X, y), n_trials=100)
+        run_optimization("XGBoost", optimize_xgboost, 50, X, y)
     elif choice == '3':
-        print("\n🚀 Optimisation CatBoost en cours...")
-        study.optimize(lambda trial: optimize_catboost(trial, X, y), n_trials=50)
+        run_optimization("CatBoost", optimize_catboost, 30, X, y)
+    elif choice == '4':
+        print("\n🔄 Lancement complet séquentiel...")
+        res_lgb = run_optimization("LightGBM", optimize_lightgbm, 50, X, y)
+        res_xgb = run_optimization("XGBoost", optimize_xgboost, 50, X, y)
+        res_cat = run_optimization("CatBoost", optimize_catboost, 30, X, y)
+        
+        print("\n\n🎉🎉 TOUT EST FINI ! RÉCAPITULATIF :")
+        print(f"👉 LightGBM: {res_lgb}")
+        print(f"👉 XGBoost: {res_xgb}")
+        print(f"👉 CatBoost: {res_cat}")
     else:
         print("Choix invalide.")
         sys.exit()
-
-    print("\n✅ OPTIMISATION TERMINÉE !")
-    print(f"🏆 Meilleur Score (neg_log_loss - plus haut est mieux) : {study.best_value:.5f}")
-    print("📝 Meilleurs Paramètres à copier :")
-    print(study.best_params)

@@ -139,13 +139,29 @@ if __name__ == "__main__":
     X_train_final = X_train.drop(columns=['ID'], errors='ignore')
     X_test_final = X_test.drop(columns=['ID'], errors='ignore')
 
-    # Target
-    y_target = y_train_raw['TARGET'].replace({'AWAY_WINS': 0, 'DRAW': 1, 'HOME_WINS': 2})
+    # Target Reconstruction
+    # Y_train.csv is OHE (HOME_WINS, DRAW, AWAY_WINS), we need a single column for classification
+    if 'TARGET' in y_train_raw.columns:
+        y_target = y_train_raw['TARGET'].replace({'AWAY_WINS': 0, 'DRAW': 1, 'HOME_WINS': 2})
+    else:
+        # Reconstruct target from OHE columns
+        # 0: AWAY_WINS, 1: DRAW, 2: HOME_WINS
+        y_target = y_train_raw[['AWAY_WINS', 'DRAW', 'HOME_WINS']].idxmax(axis=1).replace({
+            'AWAY_WINS': 0, 'DRAW': 1, 'HOME_WINS': 2
+        })
 
     # 5.B.3 Feature Selection (Top-K with LightGBM)
     # Using a fast LGBM to select best features
-    print("Feature Selection (LGBM)...")
-    lgb_sel = lgb.LGBMClassifier(n_estimators=100, random_state=42, verbose=-1)
+    print("Feature Selection (LGBM - Gain)...")
+    lgb_sel = lgb.LGBMClassifier(n_estimators=2000, learning_rate=0.02,
+            num_leaves=31,
+            subsample=0.9,
+            colsample_bytree=0.9,
+            reg_lambda=1.0,
+            random_state=42,
+            n_jobs=-1,
+            verbose=-1,
+            importance_type='gain')
     # Simple imputation for selection (LGBM handles nans but good practice)
     lgb_sel.fit(X_train_final, y_target)
     
@@ -167,7 +183,7 @@ if __name__ == "__main__":
     
     # Removing extreme outliers if any (optional, standard scaling is robust enough)
     
-    cat_reg = CatBoostRegressor(iterations=300, depth=4, learning_rate=0.05, loss_function='RMSE', verbose=0, random_seed=42)
+    cat_reg = CatBoostRegressor(iterations=500, depth=6, learning_rate=0.05, loss_function='RMSE', verbose=0, random_seed=42)
     
     # Cross-Val Predictions for Train (to avoid leak)
     # We predict goal diff for each fold, then use it as feature
@@ -189,20 +205,29 @@ if __name__ == "__main__":
     model_choice = args.model if args.model else _prompt_model_choice()
     
     # Hyperparameters (Optimized previously)
+    # Added L1/L2 regularization to prevent overfitting on 800+ features
     params_lgb = {
-        'n_estimators': 1500, 'learning_rate': 0.015, 'num_leaves': 31, 
-        'subsample': 0.8, 'colsample_bytree': 0.8, 'random_state': 42, 'verbose': -1
+        'n_estimators': 675, 'learning_rate': 0.006921430104787609, 'num_leaves': 96, 
+        'subsample': 0.9451510441002412, 'colsample_bytree':  0.7349031047131501,'max_depth': 18,'min_child_samples': 53,
+        'reg_alpha': 0.018217537238705006, 'reg_lambda': 8.02527438958144,  # L1/L2
+        'random_state': 42, 'verbose': -1,'n_jobs': -1
     }
     
     params_xgb = {
-        'n_estimators': 1200, 'learning_rate': 0.02, 'max_depth': 5, 
-        'subsample': 0.8, 'colsample_bytree': 0.8, 'random_state': 42, 
-        'enable_categorical': False, 'n_jobs': -1
+        'n_estimators': 463, 'learning_rate': 0.013621254775271107, 'max_depth': 3, 
+        'subsample': 0.5465452013828958, 'colsample_bytree': 0.5113398671313254, 
+        'eval_metric': 'mlogloss','tree_method': 'hist',
+        'reg_alpha': 0.7854236780369659, 'reg_lambda': 3.5901935424101845,  # L1/L2
+        'random_state': 42, 'gamma': 2.3773484745997786,'min_child_weight': 2,
+        'n_jobs': -1
     }
     
     params_cat = {
-        'iterations': 1500, 'learning_rate': 0.02, 'depth': 6, 
-        'l2_leaf_reg': 5, 'loss_function': 'MultiClass', 'verbose': 0, 'random_seed': 42
+        'iterations': 1041, 'learning_rate': 0.018811897562003008, 'depth': 10, 
+        'l2_leaf_reg': 2.2707122819052272,'border_count': 101, 'subsample': 0.7912439842621549,
+        'random_strength': 2.2811358187843416,'rsm': 0.6,
+        'verbose': 0, 'random_seed': 42,'bootstrap_type': 'Bernoulli',
+        'allow_writing_files': False
     }
 
     # Model Definition
@@ -227,19 +252,19 @@ if __name__ == "__main__":
             n_jobs=-1
         )
 
-    # 6.1 Validation (Fast Estimate)
-    print(f"--- Training {model_choice.upper()} (Validation) ---")
+    # 6.1 Validation (Robust Estimate with CV)
+    print(f"--- Training {model_choice.upper()} (Cross-Validation) ---")
     
-    # Split 80/20 for fast validation check
-    XT_train, XT_val, yt_train, yt_val = train_test_split(X_train_final, y_target, test_size=0.2, random_state=42, stratify=y_target)
+    # Utilisation de la validation croisée (5 folds) pour un score robuste
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    scores = cross_val_score(model, X_train_final, y_target, cv=cv, scoring='accuracy', n_jobs=-1)
     
-    model.fit(XT_train, yt_train)
-    val_preds = model.predict(XT_val)
-    score = accuracy_score(yt_val, val_preds)
+    score = np.mean(scores)
+    std_score = np.std(scores)
     
-    print(f"📊 Validation Score (20% holdout) : {score:.4f}")
+    print(f"📊 CV Score (5-Folds) : {score:.4f} (+/- {std_score:.4f})")
     
-    if score < 0.4850:
+    if score < 0.4870:
         print(f"⚠️ Score too low (< 0.4850). Aborting full training.")
         save_experiment(score, {"model": model_choice}, "Score insufficient", None)
     else:
@@ -252,11 +277,10 @@ if __name__ == "__main__":
         test_probs = model.predict_proba(X_test_final)
         test_preds = np.argmax(test_probs, axis=1) # 0, 1, 2
         
-        # Map back to strings
-        mapping = {0: 'AWAY_WINS', 1: 'DRAW', 2: 'HOME_WINS'}
-        test_preds_str = [mapping[p] for p in test_preds]
-        
-        # Export
-        submission = pd.DataFrame({'ID': ID_test, 'TARGET': test_preds_str})
+        # Export in OHE format (HOME_WINS, DRAW, AWAY_WINS)
+        submission = pd.DataFrame({'ID': ID_test})
+        submission['HOME_WINS'] = (test_preds == 2).astype(int)
+        submission['DRAW'] = (test_preds == 1).astype(int)
+        submission['AWAY_WINS'] = (test_preds == 0).astype(int)
         
         save_experiment(score, {"model": model_choice}, f"Full Run {model_choice}", submission)
