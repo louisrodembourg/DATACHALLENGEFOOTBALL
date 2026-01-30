@@ -6,6 +6,8 @@ import xgboost as xgb
 from catboost import CatBoostClassifier, CatBoostRegressor
 from sklearn.model_selection import StratifiedKFold, cross_val_score, cross_val_predict
 from sklearn.preprocessing import LabelEncoder
+from sklearn.pipeline import make_pipeline
+from sklearn.feature_selection import SelectFromModel
 import warnings
 import sys
 from sklearn.base import BaseEstimator
@@ -73,29 +75,13 @@ def prepare_training_matrix(
     # Retrait ID après alignement
     X = X.drop(columns=['ID'], errors='ignore')
     
-    # 4. Top-K Selection
-    if use_topk:
-        print(f"--- Sélection Top-{topk_features} features (LightGBM gain) ---")
-        selector_model = lgb.LGBMClassifier(
-            n_estimators=2000,
-            learning_rate=0.02,
-            num_leaves=31,
-            subsample=0.9,
-            colsample_bytree=0.9,
-            reg_lambda=1.0,
-            random_state=random_state,
-            n_jobs=-1,
-            verbose=-1,            importance_type='gain'        )
-        selector_model.fit(X, y)
-        # Use default feature_importances_ (split) to match run_pipeline.py
-        importances = selector_model.feature_importances_
-        feature_names = selector_model.feature_name_
-        imp_df = pd.DataFrame({'feature': feature_names, 'importance_gain': importances})
-        imp_df.sort_values('importance_gain', ascending=False, inplace=True)
-        keep = imp_df['feature'].head(min(topk_features, imp_df.shape[0])).tolist()
-        X = X[keep].copy()
-        print(f"✅ Après TopK: X={X.shape}")
-
+    # 4. Top-K Selection (DÉSACTIVÉ ICI POUR ÉVITER LEAKAGE, DÉPLACÉ DANS LA CV)
+    #if use_topk:
+    #    print(f"--- Sélection Top-{topk_features} features (LightGBM gain) ---")
+        # LEAKAGE ALERT: Fitting on whole X, y makes CV scores overly optimistic!
+        # Moved to Pipeline inside cross_val_score
+    #    pass
+    
     # 5. PRED_GOAL_DIFF
     if add_pred_goal_diff:
         print("--- Ajout Feature Auxiliaire (PRED_GOAL_DIFF) ---")
@@ -122,6 +108,22 @@ def prepare_training_matrix(
 # 🎯 OPTIMISATION LOG LOSS (Meilleur pour les probas du Stacking)
 # =============================================================================
 
+def get_selector(random_state=42):
+    """
+    Returns a Feature Selector based on LightGBM gain.
+    Included in Pipeline to prevent Data Leakage.
+    """
+    lgb_selector = lgb.LGBMClassifier(
+        n_estimators=100, # Lightweight for selection
+        learning_rate=0.05,
+        num_leaves=31,
+        random_state=random_state,
+        n_jobs=1,
+        verbose=-1,
+        importance_type='gain'
+    )
+    return SelectFromModel(estimator=lgb_selector, max_features=800, threshold=-np.inf) # Take top 800
+
 def optimize_lightgbm(trial, X, y):
     params = {
         'objective': 'multiclass',
@@ -141,9 +143,12 @@ def optimize_lightgbm(trial, X, y):
     }
     
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    # On optimise le neg_log_loss pour avoir de meilleures probabilités
-    estimator = cast(BaseEstimator, lgb.LGBMClassifier(**params, n_jobs=1))
-    scores = cross_val_score(estimator, X, y, cv=cv, scoring='neg_log_loss')
+    model = lgb.LGBMClassifier(**params, n_jobs=1)
+    
+    # Pipeline: Selection (Train only) -> Model
+    pipeline = make_pipeline(get_selector(), model)
+    
+    scores = cross_val_score(pipeline, X, y, cv=cv, scoring='neg_log_loss')
     return scores.mean()
 
 def optimize_xgboost(trial, X, y):
@@ -163,8 +168,12 @@ def optimize_xgboost(trial, X, y):
     }
     
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    estimator = cast(BaseEstimator, xgb.XGBClassifier(**params, n_jobs=1))
-    scores = cross_val_score(estimator, X, y, cv=cv, scoring='neg_log_loss')
+    model = xgb.XGBClassifier(**params, n_jobs=1)
+    
+    # Pipeline: Selection (Train only) -> Model
+    pipeline = make_pipeline(get_selector(), model)
+    
+    scores = cross_val_score(pipeline, X, y, cv=cv, scoring='neg_log_loss')
     return scores.mean()
 
 def optimize_catboost(trial, X, y):
@@ -184,8 +193,12 @@ def optimize_catboost(trial, X, y):
     }
     
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    estimator = cast(BaseEstimator, CatBoostClassifier(**params, thread_count=1))
-    scores = cross_val_score(estimator, X, y, cv=cv, scoring='neg_log_loss')
+    model = CatBoostClassifier(**params, thread_count=1)
+    
+    # Pipeline: Selection (Train only) -> Model
+    pipeline = make_pipeline(get_selector(), model)
+    
+    scores = cross_val_score(pipeline, X, y, cv=cv, scoring='neg_log_loss')
     return scores.mean()
 
 # =============================================================================

@@ -150,33 +150,11 @@ if __name__ == "__main__":
             'AWAY_WINS': 0, 'DRAW': 1, 'HOME_WINS': 2
         })
 
-    # 5.B.3 Feature Selection (Top-K with LightGBM)
-    # Using a fast LGBM to select best features
-    print("Feature Selection (LGBM - Gain)...")
-    lgb_sel = lgb.LGBMClassifier(n_estimators=2000, learning_rate=0.02,
-            num_leaves=31,
-            subsample=0.9,
-            colsample_bytree=0.9,
-            reg_lambda=1.0,
-            random_state=42,
-            n_jobs=-1,
-            verbose=-1,
-            importance_type='gain')
-    # Simple imputation for selection (LGBM handles nans but good practice)
-    lgb_sel.fit(X_train_final, y_target)
+    # 5.B.3 Feature Selection (MOVED TO PIPELINE TO AVOID LEAKAGE)
+    # The selection led to Overfitting/Optimistic bias in CV.
+    # Now handled inside the model pipeline.
+    print("Feature Selection will be handled inside the Model Pipeline.")
     
-    # Get importance
-    importances = pd.Series(lgb_sel.feature_importances_, index=X_train_final.columns)
-    # Keep Top 800
-    top_k = 800
-    if len(importances) > top_k:
-        top_features = importances.nlargest(top_k).index.tolist()
-        print(f"📉 Reducing to Top {top_k} features.")
-        X_train_final = X_train_final[top_features]
-        X_test_final = X_test_final[top_features]
-    else:
-        print(f"✨ Kept all {len(importances)} features (<= {top_k}).")
-
     # --- 5.C Auxiliary Feature (Goal Diff) ---
     print("Training Auxiliary Model (Goal Diff)...")
     y_goal_diff = y_supp['GOAL_DIFF_HOME_AWAY']
@@ -231,13 +209,21 @@ if __name__ == "__main__":
     }
 
     # Model Definition
-    model = None
+    
+    # Feature Selector for Pipeline
+    selector = SelectFromModel(
+        estimator=lgb.LGBMClassifier(n_estimators=100, learning_rate=0.05, num_leaves=31, importance_type='gain', random_state=42, verbose=-1, n_jobs=1),
+        max_features=800,
+        threshold=-np.inf
+    )
+
+    base_model = None
     if model_choice == 'lgb':
-        model = lgb.LGBMClassifier(**params_lgb)
+        base_model = lgb.LGBMClassifier(**params_lgb)
     elif model_choice == 'xgb':
-        model = xgb.XGBClassifier(**params_xgb)
+        base_model = xgb.XGBClassifier(**params_xgb)
     elif model_choice == 'cat':
-        model = CatBoostClassifier(**params_cat)
+        base_model = CatBoostClassifier(**params_cat)
     elif model_choice == 'stack':
         # Stacking
         estimators = [
@@ -245,12 +231,15 @@ if __name__ == "__main__":
             ('xgb', xgb.XGBClassifier(**params_xgb)),
             ('cat', CatBoostClassifier(**params_cat))
         ]
-        model = StackingClassifier(
+        base_model = StackingClassifier(
             estimators=estimators,
             final_estimator=LogisticRegression(),
             cv=5,
             n_jobs=-1
         )
+        
+    # Wrap in Pipeline to prevent leakage during Feature Selection
+    model = make_pipeline(selector, base_model)
 
     # 6.1 Validation (Robust Estimate with CV)
     print(f"--- Training {model_choice.upper()} (Cross-Validation) ---")
