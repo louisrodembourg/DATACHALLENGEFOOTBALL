@@ -213,7 +213,7 @@ if __name__ == "__main__":
     # Feature Selector for Pipeline
     selector = SelectFromModel(
         estimator=lgb.LGBMClassifier(n_estimators=100, learning_rate=0.05, num_leaves=31, importance_type='gain', random_state=42, verbose=-1, n_jobs=1),
-        max_features=800,
+        max_features=1350,
         threshold=-np.inf
     )
 
