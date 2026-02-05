@@ -214,7 +214,7 @@ def build_features(team_home, team_away, player_home, player_away):
 
     # Classic Deltas (Home - Away)
     numeric_cols = df.select_dtypes(include=[np.number]).columns
-    base_features = set([c.replace('_HOME', '') for c in numeric_cols if '_HOME' in c])
+    base_features = sorted(list(set([c.replace('_HOME', '') for c in numeric_cols if '_HOME' in c])))
     for col in base_features:
         col_h, col_a = f"{col}_HOME", f"{col}_AWAY"
         if col_h in df.columns and col_a in df.columns: df[f'DELTA_{col}'] = df[col_h] - df[col_a]
