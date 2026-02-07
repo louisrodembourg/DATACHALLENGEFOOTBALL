@@ -22,7 +22,9 @@ import sys
 from typing import cast, Protocol, Any
 
 # Machine Learning & Stats
+from sklearn.calibration import CalibratedClassifierCV 
 from sklearn.neural_network import MLPClassifier
+
 from sklearn.decomposition import PCA
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler, LabelEncoder
@@ -248,6 +250,10 @@ if __name__ == "__main__":
             cv=5,
             n_jobs=-1
         )
+        
+        # Calibration of the final Stacking output
+        # This improves the reliability of the probabilities predicted by the stack
+        base_model = CalibratedClassifierCV(base_model, method='isotonic', cv=3)
         
     # Wrap in Pipeline to prevent leakage during Feature Selection
     model = make_pipeline(selector, base_model)
