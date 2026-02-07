@@ -50,13 +50,13 @@ sys.path.append(project_root)
 # Custom Modules
 try:
     from src.data import load_data
-    from src.features import build_features, fit_player_clustering
+    from src.features import build_features
     from src.utils import save_experiment
 except ImportError:
     # If running from root without package structure
     sys.path.append(os.path.join(project_root, 'src'))
     from data import load_data
-    from features import build_features, fit_player_clustering
+    from features import build_features
     from utils import save_experiment
 
 # Configuration
@@ -104,20 +104,9 @@ if __name__ == "__main__":
     (xt_h, xt_a, xp_h, xp_a, y_train_raw, y_supp, 
      xtest_h, xtest_a, xpt_h, xpt_a) = load_data()
 
-    # --- 5.A.1 Player Clustering (Train on Train Set) ---
-    # Combine home and away players from train set to learn roles
-    print("Training Player Roles (Clustering)...")
-    # Only use common columns just in case
-    cols_h = set(xp_h.columns)
-    cols_a = set(xp_a.columns)
-    common_cols = list(cols_h.intersection(cols_a))
-    
-    all_train_players = pd.concat([xp_h[common_cols], xp_a[common_cols]], axis=0, ignore_index=True)
-    cluster_bundle = fit_player_clustering(all_train_players, k=6)
-
-    # --- 5.A.2 Data Preparation (Feature Construction) ---
-    X_train = build_features(xt_h, xt_a, xp_h, xp_a, cluster_bundle=cluster_bundle)
-    X_test = build_features(xtest_h, xtest_a, xpt_h, xpt_a, cluster_bundle=cluster_bundle)
+    # --- 5.A Data Preparation (Feature Construction) ---
+    X_train = build_features(xt_h, xt_a, xp_h, xp_a)
+    X_test = build_features(xtest_h, xtest_a, xpt_h, xpt_a)
     print(f"Initial Dimensions : Train={X_train.shape}, Test={X_test.shape}")
     
     # --- 5.B Cleaning and Feature Selection ---

@@ -1,77 +1,5 @@
 import pandas as pd
 import numpy as np
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
-
-def fit_player_clustering(player_df, k=6):
-    """
-    Fits a K-Means clustering model on player statistics to identify roles.
-    """
-    print(f"--- Fitting Player Clustering (K={k}) ---")
-    numeric_cols = player_df.select_dtypes(include=[np.number]).columns.tolist()
-    # Exclude ID if present
-    if 'ID' in numeric_cols: numeric_cols.remove('ID')
-    
-    # Fill NaNs
-    X = player_df[numeric_cols].fillna(0)
-    
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    
-    kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-    kmeans.fit(X_scaled)
-    
-    return {
-        'model': kmeans,
-        'scaler': scaler,
-        'cols': numeric_cols,
-        'k': k
-    }
-
-def assign_player_clusters(player_df, cluster_bundle):
-    """
-    Assigns clusters to players using a pre-fitted model.
-    """
-    df = player_df.copy()
-    numeric_cols = cluster_bundle['cols']
-    
-    # Ensure all columns exist (fill missing with 0)
-    for c in numeric_cols:
-        if c not in df.columns:
-            df[c] = 0
-            
-    X = df[numeric_cols].fillna(0)
-    X_scaled = cluster_bundle['scaler'].transform(X)
-    df['CLUSTER'] = cluster_bundle['model'].predict(X_scaled)
-    return df
-
-def aggregate_players_by_cluster(player_df, prefix):
-    """
-    Aggregates player statistics by CLUSTER (Mean and Sum).
-    """
-    if 'CLUSTER' not in player_df.columns:
-        return pd.DataFrame() # Should not happen if called correctly
-        
-    numeric_cols = player_df.select_dtypes(include=[np.number]).columns.tolist()
-    if 'ID' not in numeric_cols: numeric_cols.append('ID')
-    if 'CLUSTER' in numeric_cols: numeric_cols.remove('CLUSTER') # Don't aggregate the cluster label itself
-    
-    cols_to_use = numeric_cols + ['CLUSTER']
-    
-    # Group by Match ID and Cluster
-    pivot_df = player_df[cols_to_use].groupby(['ID', 'CLUSTER']).agg(['mean', 'sum'])
-    
-    # Flatten MultiIndex columns
-    pivot_df.columns = [f'{c[0]}_{c[1]}' for c in pivot_df.columns]
-    
-    flat_df = pivot_df.unstack(level='CLUSTER')
-    
-    # Rename columns: e.g., P_HOME_CLUSTER_0_GOALS_mean
-    flat_df.columns = [f'{prefix}_ROLE{pos}_{col}' for col, pos in flat_df.columns]
-    
-    flat_df.reset_index(inplace=True)
-    flat_df.fillna(0, inplace=True)
-    return flat_df
 
 def aggregate_players_by_position(player_df, prefix):
     """
@@ -92,7 +20,7 @@ def aggregate_players_by_position(player_df, prefix):
     flat_df.fillna(0, inplace=True)
     return flat_df
 
-def build_features(team_home, team_away, player_home, player_away, cluster_bundle=None):
+def build_features(team_home, team_away, player_home, player_away):
     """
     Combines data, calculates ratios, smart deltas, and performs cleaning.
     """
@@ -101,23 +29,6 @@ def build_features(team_home, team_away, player_home, player_away, cluster_bundl
     # Fusions
     p_home_agg = aggregate_players_by_position(player_home, 'P_HOME')
     p_away_agg = aggregate_players_by_position(player_away, 'P_AWAY')
-    
-    # Clustering Aggregation (New!)
-    if cluster_bundle is not None:
-        print("   -> Adding Cluster-based Features...")
-        # Assign clusters
-        kp_home = assign_player_clusters(player_home, cluster_bundle)
-        kp_away = assign_player_clusters(player_away, cluster_bundle)
-        
-        # Aggregate
-        p_home_clus = aggregate_players_by_cluster(kp_home, 'P_HOME')
-        p_away_clus = aggregate_players_by_cluster(kp_away, 'P_AWAY')
-        
-        # Merge Position Aggregations with Cluster Aggregations first
-        # (Both have ID as key)
-        p_home_agg = p_home_agg.merge(p_home_clus, on='ID', how='left')
-        p_away_agg = p_away_agg.merge(p_away_clus, on='ID', how='left')
-    
     # Merge team stats with aggregated player stats
     df = team_home.merge(team_away, on='ID', suffixes=('_HOME', '_AWAY'))
     df = df.merge(p_home_agg, on='ID', how='left')
