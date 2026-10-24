@@ -1,0 +1,8 @@
+--- Loading feature cache /Users/louisrodembourg/Desktop/DATACHALLENGE/football/cache/features.pkl ---
+Data: (12303, 2783), models: ['cat', 'tabicl'], device: cpu
+    cat         6.0s  peak RAM 2.5 GB
+    tabicl  29915.6s  peak RAM 10.4 GB
+
+[INFO] Config saved: experiments/conf_cv0.4947_20261023_084926.json
+[INFO] Experiment CSV saved: experiments/sub_cv0.4947_20261023_084926.csv
+[SUCCESS] Ready for submission: 'submission/submission_V30.csv'

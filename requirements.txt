@@ -9,3 +9,4 @@ torch>=2.0.0
 matplotlib
 seaborn
 tqdm
+tabicl>=2.2.0

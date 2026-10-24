@@ -1,0 +1,20 @@
+{
+    "timestamp": "20261023_002842",
+    "cv_score": 0.4951637811915793,
+    "description": "Tabular FM benchmark (best: tabicl)",
+    "parameters": {
+        "models": [
+            "cat",
+            "tabicl"
+        ],
+        "results": {
+            "cat": 0.4934568804356661,
+            "tabicl": 0.4951637811915793,
+            "blend tabicl w=0.3": 0.49370072340079657,
+            "blend tabicl w=0.5": 0.4946760952613184,
+            "blend tabicl w=0.7": 0.4944322522961879
+        },
+        "best": "tabicl"
+    },
+    "status": "ABORTED"
+}

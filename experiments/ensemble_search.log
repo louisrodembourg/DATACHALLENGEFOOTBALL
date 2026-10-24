@@ -1,0 +1,54 @@
+--- Building 5 candidates: ['cat1000', 'cat1350', 'cat600_s7', 'xgb600', 'lgb1350'] ---
+  fold 1 cat1000      acc=0.5100 (20s)
+  fold 1 cat1350      acc=0.5083 (27s)
+  fold 1 cat600_s7    acc=0.5177 (10s)
+  fold 1 xgb600       acc=0.5043 (5s)
+  fold 1 lgb1350      acc=0.5018 (10s)
+  fold 2 cat1000      acc=0.4913 (21s)
+  fold 2 cat1350      acc=0.4921 (29s)
+  fold 2 cat600_s7    acc=0.4933 (10s)
+  fold 2 xgb600       acc=0.4888 (5s)
+  fold 2 lgb1350      acc=0.4880 (10s)
+  fold 3 cat1000      acc=0.4827 (22s)
+  fold 3 cat1350      acc=0.4815 (27s)
+  fold 3 cat600_s7    acc=0.4839 (10s)
+  fold 3 xgb600       acc=0.4860 (5s)
+  fold 3 lgb1350      acc=0.4807 (9s)
+  fold 4 cat1000      acc=0.4886 (21s)
+  fold 4 cat1350      acc=0.4915 (27s)
+  fold 4 cat600_s7    acc=0.4939 (10s)
+  fold 4 xgb600       acc=0.4870 (5s)
+  fold 4 lgb1350      acc=0.4898 (10s)
+  fold 5 cat1000      acc=0.4967 (21s)
+  fold 5 cat1350      acc=0.4972 (28s)
+  fold 5 cat600_s7    acc=0.5000 (10s)
+  fold 5 xgb600       acc=0.4935 (5s)
+  fold 5 lgb1350      acc=0.4972 (10s)
+
+=== Candidates (OOF) ===
+cat1350      acc=0.4941  logloss=1.0144
+cat600_s7    acc=0.4978  logloss=1.0151
+cat600       acc=0.4931  logloss=1.0154
+cat1000      acc=0.4939  logloss=1.0155
+cat250_s42   acc=0.4936  logloss=1.0161
+cat250_s7    acc=0.4935  logloss=1.0164
+tabicl       acc=0.4952  logloss=1.0165
+cat250_s123  acc=0.4933  logloss=1.0168
+xgb600       acc=0.4919  logloss=1.0179
+cat100       acc=0.4921  logloss=1.0187
+lgb600       acc=0.4932  logloss=1.0189
+xgb250       acc=0.4936  logloss=1.0190
+lgb1350      acc=0.4915  logloss=1.0191
+lgb250       acc=0.4908  logloss=1.0204
+gd_ordinal   acc=0.4882  logloss=1.0209
+logreg100    acc=0.4895  logloss=1.0266
+logreg250    acc=0.4852  logloss=1.0290
+
+=== Nested CV of the greedy ensemble ===
+  fold 1: ens=0.5128  cat=0.5112  weights={'cat1350': 0.48, 'cat600': 0.04, 'cat600_s7': 0.16, 'gd_ordinal': 0.04, 'logreg250': 0.04, 'tabicl': 0.24}
+  fold 2: ens=0.4949  cat=0.4913  weights={'cat1350': 0.48, 'cat600': 0.04, 'cat600_s7': 0.12, 'logreg250': 0.04, 'tabicl': 0.32}
+  fold 3: ens=0.4835  cat=0.4819  weights={'cat1350': 0.4, 'cat600_s7': 0.2, 'logreg250': 0.08, 'tabicl': 0.32}
+  fold 4: ens=0.4911  cat=0.4939  weights={'cat1350': 0.48, 'cat600': 0.12, 'logreg250': 0.04, 'tabicl': 0.36}
+  fold 5: ens=0.4959  cat=0.4898  weights={'cat1350': 0.44, 'cat600_s7': 0.16, 'logreg250': 0.08, 'tabicl': 0.32}
+Nested ensemble acc = 0.4957 ± 0.0096  vs cat250 0.4936 (gain +0.0020, wins 4/5)
+Final weights (all folds): {'cat1350': 0.48, 'cat600_s7': 0.16, 'logreg250': 0.04, 'tabicl': 0.32}

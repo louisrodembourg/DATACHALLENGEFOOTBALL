@@ -1,0 +1,15 @@
+{
+    "timestamp": "20261023_124951",
+    "cv_score": 0.499,
+    "description": "CatBoost team_only top250 (score = adversarial proxy validation)",
+    "parameters": {
+        "feature_set": "team_only",
+        "top": 250,
+        "seeds": [
+            42,
+            7,
+            123
+        ]
+    },
+    "status": "COMPLETED"
+}

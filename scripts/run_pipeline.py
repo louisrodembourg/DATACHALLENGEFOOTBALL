@@ -184,28 +184,42 @@ if __name__ == "__main__":
     
     model_choice = args.model if args.model else _prompt_model_choice()
     
-    # Hyperparameters (Optimized previously)
-    # Added L1/L2 regularization to prevent overfitting on 800+ features
+    # Hyperparameters (Aggressive Regularization to fix High Variance)
+    # Reduced complexity to prevent overfitting (Low Depth, High Reg)
     params_lgb = {
-        'n_estimators': 675, 'learning_rate': 0.006921430104787609, 'num_leaves': 96, 
-        'subsample': 0.9451510441002412, 'colsample_bytree':  0.7349031047131501,'max_depth': 18,'min_child_samples': 53,
-        'reg_alpha': 0.018217537238705006, 'reg_lambda': 8.02527438958144,  # L1/L2
+        'n_estimators': 300, 
+        'learning_rate': 0.015, 
+        'num_leaves': 31, 
+        'subsample': 0.8, 
+        'colsample_bytree': 0.6,
+        'max_depth': 6,  # Reduced from 18
+        'min_child_samples': 100, # Increased from 53
+        'reg_alpha': 10.0, # Increased massiveley (L1)
+        'reg_lambda': 20.0,  # Increased massiveley (L2)
         'random_state': 42, 'verbose': -1,'n_jobs': -1
     }
     
     params_xgb = {
-        'n_estimators': 463, 'learning_rate': 0.013621254775271107, 'max_depth': 3, 
-        'subsample': 0.5465452013828958, 'colsample_bytree': 0.5113398671313254, 
+        'n_estimators': 300, 
+        'learning_rate': 0.02, 
+        'max_depth': 4, # Reduced
+        'subsample': 0.8, 
+        'colsample_bytree': 0.6, 
         'eval_metric': 'mlogloss','tree_method': 'hist',
-        'reg_alpha': 0.7854236780369659, 'reg_lambda': 3.5901935424101845,  # L1/L2
-        'random_state': 42, 'gamma': 2.3773484745997786,'min_child_weight': 2,
+        'reg_alpha': 5.0, # Increased
+        'reg_lambda': 10.0, # Increased
+        'random_state': 42, 'gamma': 1.0, 'min_child_weight': 5,
         'n_jobs': -1
     }
     
     params_cat = {
-        'iterations': 1041, 'learning_rate': 0.018811897562003008, 'depth': 10, 
-        'l2_leaf_reg': 2.2707122819052272,'border_count': 101, 'subsample': 0.7912439842621549,
-        'random_strength': 2.2811358187843416,'rsm': 0.6,
+        'iterations': 800, 
+        'learning_rate': 0.02, 
+        'depth': 6, # Reduced from 10
+        'l2_leaf_reg': 10.0, # Increased
+        'border_count': 101, 'subsample': 0.8,
+        'random_strength': 5.0,
+        'rsm': 0.6,
         'verbose': 0, 'random_seed': 42,'bootstrap_type': 'Bernoulli',
         'allow_writing_files': False
     }
@@ -213,9 +227,10 @@ if __name__ == "__main__":
     # Model Definition
     
     # Feature Selector for Pipeline
+    # DRASTIC REDUCTION: 1350 -> 250 Features
     selector = SelectFromModel(
         estimator=lgb.LGBMClassifier(n_estimators=100, learning_rate=0.05, num_leaves=31, importance_type='gain', random_state=42, verbose=-1, n_jobs=1),
-        max_features=1350,
+        max_features=250, # Keep only top 10% strongest signals
         threshold=-np.inf
     )
 
@@ -233,16 +248,15 @@ if __name__ == "__main__":
             ('xgb', xgb.XGBClassifier(**params_xgb)),
             ('cat', CatBoostClassifier(**params_cat))
         ]
-        base_model = StackingClassifier(
+        
+        # Removed Calibration to reduce complexity (Direct Stacking)
+        stacking_clf = StackingClassifier(
             estimators=estimators,
-            final_estimator=LogisticRegression(),
+            final_estimator=LogisticRegression(C=0.1), # Regularize the meta-learner too
             cv=5,
             n_jobs=-1
         )
-        
-        # Calibration of the final Stacking output
-        # This improves the reliability of the probabilities predicted by the stack
-        base_model = CalibratedClassifierCV(base_model, method='isotonic', cv=3)
+        base_model = stacking_clf
         
     # Wrap in Pipeline to prevent leakage during Feature Selection
     model = make_pipeline(selector, base_model)

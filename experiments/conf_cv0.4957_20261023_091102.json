@@ -1,0 +1,21 @@
+{
+    "timestamp": "20261023_091102",
+    "cv_score": 0.4956511167712246,
+    "description": "Greedy ensemble (nested CV score)",
+    "parameters": {
+        "weights": {
+            "cat1350": 0.48,
+            "cat600_s7": 0.16,
+            "logreg250": 0.04,
+            "tabicl": 0.32
+        },
+        "nested_folds": [
+            0.5127996749288907,
+            0.4949207639171069,
+            0.48354327509142625,
+            0.49105691056910566,
+            0.4959349593495935
+        ]
+    },
+    "status": "COMPLETED"
+}
