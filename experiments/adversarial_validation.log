@@ -1,0 +1,14 @@
+Adversarial AUC (train vs test): 0.9808
+Proxy validation: 3076 most test-like train matches (mean p(test)=0.557 vs 0.184 for the others)
+KS shift: median=0.096, >0.10: 1365 cols, >0.05: 1846 cols
+Most shifted: {'P_HOME_goalkeeper_PLAYER_PUNCHES_season_sum_mean': 0.363, 'P_HOME_goalkeeper_PLAYER_PUNCHES_season_std_mean': 0.363, 'P_AWAY_goalkeeper_PLAYER_PUNCHES_season_sum_mean': 0.362, 'P_AWAY_goalkeeper_PLAYER_PUNCHES_season_std_mean': 0.361, 'P_HOME_attacker_PLAYER_ACCURATE_PASSES_PERCENTAGE_season_average_sum': 0.32, 'P_HOME_attacker_PLAYER_ACCURATE_PASSES_PERCENTAGE_season_average_mean': 0.32}
+
+=== Proxy validation (test-like matches) ===
+all        (2782 cols) top250   acc=0.4945  logloss=1.0124
+all        (2782 cols) top1350  acc=0.4954  logloss=1.0131
+team_only  ( 478 cols) top250   acc=0.4990  logloss=1.0114
+team_only  ( 478 cols) top478   acc=0.4938  logloss=1.0124
+ks<0.10    (1417 cols) top250   acc=0.4971  logloss=1.0128
+ks<0.10    (1417 cols) top1350  acc=0.4951  logloss=1.0128
+ks<0.05    ( 936 cols) top250   acc=0.4941  logloss=1.0161
+ks<0.05    ( 936 cols) top936   acc=0.4922  logloss=1.0136

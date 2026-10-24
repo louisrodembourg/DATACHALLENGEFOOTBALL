@@ -1,0 +1,13 @@
+{
+    "timestamp": "20261023_084926",
+    "cv_score": 0.4947,
+    "description": "Blend tabicl w=0.5 + cat",
+    "parameters": {
+        "models": [
+            "cat",
+            "tabicl"
+        ],
+        "weight": 0.5
+    },
+    "status": "COMPLETED"
+}

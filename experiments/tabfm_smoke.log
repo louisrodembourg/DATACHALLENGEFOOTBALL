@@ -1,0 +1,15 @@
+--- Loading feature cache /Users/louisrodembourg/Desktop/DATACHALLENGE/football/cache/features.pkl ---
+Data: (2000, 2783), models: ['cat', 'tabicl'], device: mps
+--- Fold 1/1 (train=1600, val=400) ---
+    cat         4.8s  peak RAM 1.9 GB
+    tabicl     24.1s  peak RAM 2.1 GB
+    cat     fold acc = 0.4950
+    tabicl  fold acc = 0.5025
+
+=== Results (OOF) ===
+cat                    acc=0.4950  logloss=1.0165  time/fold=5s
+tabicl                 acc=0.5025  logloss=1.0201  time/fold=24s
+blend tabicl w=0.3     acc=0.5050  logloss=1.0130
+blend tabicl w=0.5     acc=0.5100  logloss=1.0128
+blend tabicl w=0.7     acc=0.5025  logloss=1.0143
+Peak RAM: 2.1 GB

@@ -1,0 +1,113 @@
+--- Building 16 candidates: ['cat250_s42', 'cat250_s7', 'cat250_s123', 'cat100', 'cat600', 'cat1000', 'cat1350', 'cat600_s7', 'xgb600', 'lgb1350', 'lgb250', 'lgb600', 'xgb250', 'logreg100', 'logreg250', 'gd_ordinal'] ---
+  fold 1 leak-free PRED_GOAL_DIFF (120s)
+  fold 1 cat250_s42   acc=0.5100 (6s)
+  fold 1 cat250_s7    acc=0.5095 (6s)
+  fold 1 cat250_s123  acc=0.5071 (7s)
+  fold 1 cat100       acc=0.5071 (3s)
+  fold 1 cat600       acc=0.5075 (12s)
+  fold 1 cat1000      acc=0.5156 (25s)
+  fold 1 cat1350      acc=0.5116 (33s)
+  fold 1 cat600_s7    acc=0.5116 (13s)
+  fold 1 xgb600       acc=0.5059 (6s)
+  fold 1 lgb1350      acc=0.5095 (11s)
+  fold 1 lgb250       acc=0.5022 (5s)
+  fold 1 lgb600       acc=0.5091 (8s)
+  fold 1 xgb250       acc=0.5047 (3s)
+  fold 1 logreg100    acc=0.5075 (0s)
+  fold 1 logreg250    acc=0.5051 (0s)
+  fold 1 gd_ordinal   acc=0.4978 (10s)
+  fold 2 leak-free PRED_GOAL_DIFF (120s)
+  fold 2 cat250_s42   acc=0.4888 (6s)
+  fold 2 cat250_s7    acc=0.4896 (6s)
+  fold 2 cat250_s123  acc=0.4929 (6s)
+  fold 2 cat100       acc=0.4892 (3s)
+  fold 2 cat600       acc=0.4864 (11s)
+  fold 2 cat1000      acc=0.4880 (24s)
+  fold 2 cat1350      acc=0.4925 (31s)
+  fold 2 cat600_s7    acc=0.4905 (11s)
+  fold 2 xgb600       acc=0.4880 (5s)
+  fold 2 lgb1350      acc=0.4864 (10s)
+  fold 2 lgb250       acc=0.4917 (4s)
+  fold 2 lgb600       acc=0.4876 (7s)
+  fold 2 xgb250       acc=0.4888 (3s)
+  fold 2 logreg100    acc=0.4827 (0s)
+  fold 2 logreg250    acc=0.4779 (0s)
+  fold 2 gd_ordinal   acc=0.4888 (10s)
+  fold 3 leak-free PRED_GOAL_DIFF (119s)
+  fold 3 cat250_s42   acc=0.4807 (6s)
+  fold 3 cat250_s7    acc=0.4730 (6s)
+  fold 3 cat250_s123  acc=0.4848 (6s)
+  fold 3 cat100       acc=0.4823 (3s)
+  fold 3 cat600       acc=0.4807 (11s)
+  fold 3 cat1000      acc=0.4872 (21s)
+  fold 3 cat1350      acc=0.4807 (28s)
+  fold 3 cat600_s7    acc=0.4799 (10s)
+  fold 3 xgb600       acc=0.4872 (5s)
+  fold 3 lgb1350      acc=0.4823 (9s)
+  fold 3 lgb250       acc=0.4868 (5s)
+  fold 3 lgb600       acc=0.4807 (7s)
+  fold 3 xgb250       acc=0.4831 (2s)
+  fold 3 logreg100    acc=0.4754 (0s)
+  fold 3 logreg250    acc=0.4762 (0s)
+  fold 3 gd_ordinal   acc=0.4872 (8s)
+  fold 4 leak-free PRED_GOAL_DIFF (108s)
+  fold 4 cat250_s42   acc=0.4862 (5s)
+  fold 4 cat250_s7    acc=0.4902 (5s)
+  fold 4 cat250_s123  acc=0.4915 (5s)
+  fold 4 cat100       acc=0.4923 (3s)
+  fold 4 cat600       acc=0.4919 (10s)
+  fold 4 cat1000      acc=0.4939 (21s)
+  fold 4 cat1350      acc=0.4963 (29s)
+  fold 4 cat600_s7    acc=0.4947 (11s)
+  fold 4 xgb600       acc=0.4923 (5s)
+  fold 4 lgb1350      acc=0.4931 (10s)
+  fold 4 lgb250       acc=0.4919 (5s)
+  fold 4 lgb600       acc=0.4955 (7s)
+  fold 4 xgb250       acc=0.4902 (2s)
+  fold 4 logreg100    acc=0.4874 (0s)
+  fold 4 logreg250    acc=0.4854 (0s)
+  fold 4 gd_ordinal   acc=0.4959 (8s)
+  fold 5 leak-free PRED_GOAL_DIFF (109s)
+  fold 5 cat250_s42   acc=0.4935 (6s)
+  fold 5 cat250_s7    acc=0.4935 (6s)
+  fold 5 cat250_s123  acc=0.4955 (6s)
+  fold 5 cat100       acc=0.4923 (3s)
+  fold 5 cat600       acc=0.4967 (9s)
+  fold 5 cat1000      acc=0.4927 (22s)
+  fold 5 cat1350      acc=0.4980 (29s)
+  fold 5 cat600_s7    acc=0.4972 (10s)
+  fold 5 xgb600       acc=0.4955 (5s)
+  fold 5 lgb1350      acc=0.4976 (10s)
+  fold 5 lgb250       acc=0.5008 (5s)
+  fold 5 lgb600       acc=0.5004 (7s)
+  fold 5 xgb250       acc=0.5000 (2s)
+  fold 5 logreg100    acc=0.4935 (0s)
+  fold 5 logreg250    acc=0.4902 (0s)
+  fold 5 gd_ordinal   acc=0.4947 (8s)
+
+=== Candidates (OOF) ===
+cat1350      acc=0.4958  logloss=1.0144
+cat1000      acc=0.4955  logloss=1.0148
+cat600       acc=0.4926  logloss=1.0150
+cat600_s7    acc=0.4948  logloss=1.0154
+cat250_s7    acc=0.4912  logloss=1.0157
+cat250_s123  acc=0.4944  logloss=1.0161
+xgb600       acc=0.4938  logloss=1.0162
+cat250_s42   acc=0.4918  logloss=1.0164
+cat100       acc=0.4926  logloss=1.0172
+xgb250       acc=0.4934  logloss=1.0172
+lgb1350      acc=0.4938  logloss=1.0174
+lgb600       acc=0.4947  logloss=1.0177
+gd_ordinal   acc=0.4929  logloss=1.0186
+lgb250       acc=0.4947  logloss=1.0190
+logreg100    acc=0.4893  logloss=1.0257
+logreg250    acc=0.4870  logloss=1.0284
+
+=== Nested CV of the greedy ensemble ===
+  fold 1: ens=0.5095  cat=0.5100  weights={'cat1350': 0.48, 'cat600': 0.16, 'gd_ordinal': 0.24, 'logreg100': 0.04, 'logreg250': 0.04, 'xgb600': 0.04}
+  fold 2: ens=0.4905  cat=0.4888  weights={'cat1000': 0.16, 'cat1350': 0.24, 'cat600': 0.24, 'gd_ordinal': 0.16, 'logreg100': 0.08, 'logreg250': 0.04, 'xgb600': 0.08}
+  fold 3: ens=0.4835  cat=0.4807  weights={'cat1000': 0.2, 'cat1350': 0.4, 'cat600': 0.12, 'gd_ordinal': 0.08, 'logreg100': 0.04, 'logreg250': 0.08, 'xgb600': 0.08}
+  fold 4: ens=0.4919  cat=0.4862  weights={'cat1000': 0.28, 'cat1350': 0.28, 'cat600': 0.04, 'gd_ordinal': 0.24, 'lgb1350': 0.04, 'logreg100': 0.08, 'logreg250': 0.04}
+  fold 5: ens=0.4972  cat=0.4935  weights={'cat1000': 0.16, 'cat1350': 0.56, 'gd_ordinal': 0.16, 'logreg100': 0.08, 'logreg250': 0.04}
+Nested ensemble acc = 0.4945 ± 0.0087  vs cat250 0.4918 (gain +0.0027, wins 4/5)
+Final weights (all folds): {'cat1000': 0.16, 'cat1350': 0.4, 'cat600': 0.12, 'gd_ordinal': 0.16, 'logreg100': 0.08, 'logreg250': 0.04, 'xgb600': 0.04}

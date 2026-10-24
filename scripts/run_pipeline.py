@@ -22,7 +22,9 @@ import sys
 from typing import cast, Protocol, Any
 
 # Machine Learning & Stats
+from sklearn.calibration import CalibratedClassifierCV 
 from sklearn.neural_network import MLPClassifier
+
 from sklearn.decomposition import PCA
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler, LabelEncoder
@@ -150,33 +152,11 @@ if __name__ == "__main__":
             'AWAY_WINS': 0, 'DRAW': 1, 'HOME_WINS': 2
         })
 
-    # 5.B.3 Feature Selection (Top-K with LightGBM)
-    # Using a fast LGBM to select best features
-    print("Feature Selection (LGBM - Gain)...")
-    lgb_sel = lgb.LGBMClassifier(n_estimators=2000, learning_rate=0.02,
-            num_leaves=31,
-            subsample=0.9,
-            colsample_bytree=0.9,
-            reg_lambda=1.0,
-            random_state=42,
-            n_jobs=-1,
-            verbose=-1,
-            importance_type='gain')
-    # Simple imputation for selection (LGBM handles nans but good practice)
-    lgb_sel.fit(X_train_final, y_target)
+    # 5.B.3 Feature Selection (MOVED TO PIPELINE TO AVOID LEAKAGE)
+    # The selection led to Overfitting/Optimistic bias in CV.
+    # Now handled inside the model pipeline.
+    print("Feature Selection will be handled inside the Model Pipeline.")
     
-    # Get importance
-    importances = pd.Series(lgb_sel.feature_importances_, index=X_train_final.columns)
-    # Keep Top 800
-    top_k = 800
-    if len(importances) > top_k:
-        top_features = importances.nlargest(top_k).index.tolist()
-        print(f"📉 Reducing to Top {top_k} features.")
-        X_train_final = X_train_final[top_features]
-        X_test_final = X_test_final[top_features]
-    else:
-        print(f"✨ Kept all {len(importances)} features (<= {top_k}).")
-
     # --- 5.C Auxiliary Feature (Goal Diff) ---
     print("Training Auxiliary Model (Goal Diff)...")
     y_goal_diff = y_supp['GOAL_DIFF_HOME_AWAY']
@@ -204,40 +184,63 @@ if __name__ == "__main__":
     
     model_choice = args.model if args.model else _prompt_model_choice()
     
-    # Hyperparameters (Optimized previously)
-    # Added L1/L2 regularization to prevent overfitting on 800+ features
+    # Hyperparameters (Aggressive Regularization to fix High Variance)
+    # Reduced complexity to prevent overfitting (Low Depth, High Reg)
     params_lgb = {
-        'n_estimators': 675, 'learning_rate': 0.006921430104787609, 'num_leaves': 96, 
-        'subsample': 0.9451510441002412, 'colsample_bytree':  0.7349031047131501,'max_depth': 18,'min_child_samples': 53,
-        'reg_alpha': 0.018217537238705006, 'reg_lambda': 8.02527438958144,  # L1/L2
+        'n_estimators': 300, 
+        'learning_rate': 0.015, 
+        'num_leaves': 31, 
+        'subsample': 0.8, 
+        'colsample_bytree': 0.6,
+        'max_depth': 6,  # Reduced from 18
+        'min_child_samples': 100, # Increased from 53
+        'reg_alpha': 10.0, # Increased massiveley (L1)
+        'reg_lambda': 20.0,  # Increased massiveley (L2)
         'random_state': 42, 'verbose': -1,'n_jobs': -1
     }
     
     params_xgb = {
-        'n_estimators': 463, 'learning_rate': 0.013621254775271107, 'max_depth': 3, 
-        'subsample': 0.5465452013828958, 'colsample_bytree': 0.5113398671313254, 
+        'n_estimators': 300, 
+        'learning_rate': 0.02, 
+        'max_depth': 4, # Reduced
+        'subsample': 0.8, 
+        'colsample_bytree': 0.6, 
         'eval_metric': 'mlogloss','tree_method': 'hist',
-        'reg_alpha': 0.7854236780369659, 'reg_lambda': 3.5901935424101845,  # L1/L2
-        'random_state': 42, 'gamma': 2.3773484745997786,'min_child_weight': 2,
+        'reg_alpha': 5.0, # Increased
+        'reg_lambda': 10.0, # Increased
+        'random_state': 42, 'gamma': 1.0, 'min_child_weight': 5,
         'n_jobs': -1
     }
     
     params_cat = {
-        'iterations': 1041, 'learning_rate': 0.018811897562003008, 'depth': 10, 
-        'l2_leaf_reg': 2.2707122819052272,'border_count': 101, 'subsample': 0.7912439842621549,
-        'random_strength': 2.2811358187843416,'rsm': 0.6,
+        'iterations': 800, 
+        'learning_rate': 0.02, 
+        'depth': 6, # Reduced from 10
+        'l2_leaf_reg': 10.0, # Increased
+        'border_count': 101, 'subsample': 0.8,
+        'random_strength': 5.0,
+        'rsm': 0.6,
         'verbose': 0, 'random_seed': 42,'bootstrap_type': 'Bernoulli',
         'allow_writing_files': False
     }
 
     # Model Definition
-    model = None
+    
+    # Feature Selector for Pipeline
+    # DRASTIC REDUCTION: 1350 -> 250 Features
+    selector = SelectFromModel(
+        estimator=lgb.LGBMClassifier(n_estimators=100, learning_rate=0.05, num_leaves=31, importance_type='gain', random_state=42, verbose=-1, n_jobs=1),
+        max_features=250, # Keep only top 10% strongest signals
+        threshold=-np.inf
+    )
+
+    base_model = None
     if model_choice == 'lgb':
-        model = lgb.LGBMClassifier(**params_lgb)
+        base_model = lgb.LGBMClassifier(**params_lgb)
     elif model_choice == 'xgb':
-        model = xgb.XGBClassifier(**params_xgb)
+        base_model = xgb.XGBClassifier(**params_xgb)
     elif model_choice == 'cat':
-        model = CatBoostClassifier(**params_cat)
+        base_model = CatBoostClassifier(**params_cat)
     elif model_choice == 'stack':
         # Stacking
         estimators = [
@@ -245,12 +248,18 @@ if __name__ == "__main__":
             ('xgb', xgb.XGBClassifier(**params_xgb)),
             ('cat', CatBoostClassifier(**params_cat))
         ]
-        model = StackingClassifier(
+        
+        # Removed Calibration to reduce complexity (Direct Stacking)
+        stacking_clf = StackingClassifier(
             estimators=estimators,
-            final_estimator=LogisticRegression(),
+            final_estimator=LogisticRegression(C=0.1), # Regularize the meta-learner too
             cv=5,
             n_jobs=-1
         )
+        base_model = stacking_clf
+        
+    # Wrap in Pipeline to prevent leakage during Feature Selection
+    model = make_pipeline(selector, base_model)
 
     # 6.1 Validation (Robust Estimate with CV)
     print(f"--- Training {model_choice.upper()} (Cross-Validation) ---")

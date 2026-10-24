@@ -1,0 +1,37 @@
+--- Loading feature cache /Users/louisrodembourg/Desktop/DATACHALLENGE/football/cache/features.pkl ---
+Data: (12303, 2783), models: ['cat', 'tabicl'], device: cpu
+--- Fold 1/5 (train=9842, val=2461) ---
+    cat         6.2s  peak RAM 2.4 GB
+    tabicl    183.4s  peak RAM 9.4 GB
+    cat     fold acc = 0.5095
+    tabicl  fold acc = 0.5055
+--- Fold 2/5 (train=9842, val=2461) ---
+    cat         6.3s  peak RAM 9.4 GB
+    tabicl    193.2s  peak RAM 9.4 GB
+    cat     fold acc = 0.4913
+    tabicl  fold acc = 0.4961
+--- Fold 3/5 (train=9842, val=2461) ---
+    cat         5.9s  peak RAM 9.4 GB
+    tabicl    189.7s  peak RAM 9.4 GB
+    cat     fold acc = 0.4823
+    tabicl  fold acc = 0.4844
+--- Fold 4/5 (train=9843, val=2460) ---
+    cat         6.5s  peak RAM 9.4 GB
+    tabicl    181.1s  peak RAM 9.4 GB
+    cat     fold acc = 0.4915
+    tabicl  fold acc = 0.4972
+--- Fold 5/5 (train=9843, val=2460) ---
+    cat         5.8s  peak RAM 9.4 GB
+    tabicl    198.5s  peak RAM 9.4 GB
+    cat     fold acc = 0.4927
+    tabicl  fold acc = 0.4927
+
+=== Results (OOF) ===
+cat                    acc=0.4935  logloss=1.0167  time/fold=6s
+tabicl                 acc=0.4952  logloss=1.0165  time/fold=189s
+blend tabicl w=0.3     acc=0.4937  logloss=1.0152
+blend tabicl w=0.5     acc=0.4947  logloss=1.0149
+blend tabicl w=0.7     acc=0.4944  logloss=1.0151
+Peak RAM: 9.4 GB
+
+[INFO] Config saved: experiments/conf_cv0.4952_20261023_002842.json

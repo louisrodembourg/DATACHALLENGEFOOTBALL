@@ -1,88 +1,55 @@
-# Football Match Prediction Project ⚽
+# Football Match Prediction ⚽
 
-Ce repository contient le code source d'un pipeline de Machine Learning complet pour la prédiction de résultats de matchs de football (Victoire Domicile, Nul, Victoire Extérieur). 
+Prédire l'issue d'un match (`HOME_WINS` / `DRAW` / `AWAY_WINS`) à partir de statistiques agrégées d'équipes et de joueurs. Data Challenge **QRT « Football : Qui va gagner ? »**.
 
-Le projet se distingue par une approche **Data-Centric**, privilégiant une ingénierie des features métier avancée et une architecture modulaire robuste, plutôt que la complexification inutile des modèles.
+Approche **data-centric** : l'effort porte sur les features et la rigueur de validation, pas sur la complexité des modèles.
 
-## 📋 Table des Matières
-- [Contexte](#contexte)
-- [Architecture du Code](#architecture-du-code)
-- [Méthodologie D détaillée](#méthodologie-détaillée)
-  - [1. Feature Engineering Avancé](#1-feature-engineering-avancé)
-  - [2. Stratégie de Sélection (Signal vs Bruit)](#2-stratégie-de-sélection-signal-vs-bruit)
-  - [3. Feature Stacking](#3-feature-stacking)
-  - [4. Modélisation](#4-modélisation)
-- [Installation & Utilisation](#installation--utilisation)
+## Résultats
 
-## 📖 Contexte
-L'objectif est de prédire l'issue d'un match de football (`HOME_WINS`, `DRAW`, `AWAY_WINS`) à partir de données historiques hétérogènes : statistiques d'équipes et statistiques individuelles de joueurs.
+| Méthode | Validation | Score en ligne |
+|---|---|---|
+| **Stacking LightGBM + XGBoost + CatBoost** (retenu) | 0.4935 – 0.4956 (CV) | **0.4913** |
+| CatBoost features équipe seules (robuste au shift) | 0.4990 (validation proxy) | 0.4888 |
+| Blend 50 % TabICL + 50 % CatBoost | 0.4947 (CV) | 0.4880 |
+| Ensemble glouton (CatBoost + TabICL + LogReg) | 0.4957 (CV imbriquée) | 0.4873 |
+| TabICL seul (foundation model tabulaire) | 0.4952 (CV) | — |
 
-**Contrainte majeure** : Les données joueurs sont granulaires et variables (le nombre de joueurs et leurs positions changent). Le défi technique principal est donc de synthétiser cette information dans un format tabulaire fixe sans perte de signal.
+Métrique : accuracy. Le problème est très bruité : 0.49–0.50 correspond au haut du classement.
 
-## 📂 Architecture du Code
+**Conclusion.** Tous les scores en ligne tiennent dans 0.004, soit l'ordre de grandeur de l'incertitude du classement (±0.003 sur 25 000 matchs). Les variantes sont donc statistiquement équivalentes. Le stacking est conservé comme soumission finale, et j'ai arrêté d'optimiser sur le classement pour ne pas surapprendre le leaderboard.
 
-Le projet suit les standards de **Clean Architecture** pour garantir la maintenabilité et la reproductibilité :
+## Méthodes
+
+1. **Pipeline GBDT** : feature engineering métier (environ 2 800 variables), sélection dans chaque fold, feature auxiliaire « différence de buts prédite », stacking de boosters.
+   → [docs/methodology_fr.md](docs/methodology_fr.md)
+2. **Foundation model tabulaire (TabICL)** : transformer pré-entraîné qui prédit par *in-context learning*, sans entraînement ni tuning, comparé au GBDT sur les mêmes folds.
+   → [docs/tabular_foundation_model.md](docs/tabular_foundation_model.md)
+3. **Validation et robustesse** : correction d'une fuite, ensemble validé en CV imbriquée, diagnostic du décalage train/test.
+   → [docs/validation_robustesse.md](docs/validation_robustesse.md)
+
+**Constats clés**
+- Un modèle pré-entraîné sans réglage atteint le niveau de la pipeline optimisée, et les deux sont d'accord sur 92 % des prédictions : le plafond vient des données, pas du modèle.
+- Train et test suivent des distributions différentes : un classifieur les distingue avec une AUC de 0.98. C'est pour cette raison que les gains de CV ne se retrouvent pas en ligne.
+
+## Utilisation
 
 ```bash
-.
-├── src/                   # 🧠 Cœur du projet (Modules réutilisables)
-│   ├── data.py            # Chargement robuste et centralisé des données
-│   ├── features.py        # Logique métier : Création et transformation des variables
-│   └── utils.py           # Outils transverses (Logging, Sauvegarde, Reproductibilité)
-├── scripts/               # ⚡ Exécutables (CLI)
-│   ├── run_pipeline.py    # Pipeline Principal (End-to-End : Data -> Train -> Predict)
-│   ├── optimize_features.py # Script de sélection de variables (Optuna/LGBM)
-│   └── optimize_hyperparameters.py # Tuning des modèles
-├── experiments/           # 🧪 Laboratoire : Logs JSON et résultats de chaque run
-├── docs/                  # Documentation technique
-└── requirements.txt       # Environnement d'exécution
+pip install -r requirements.txt
+
+python scripts/run_pipeline.py --model stack               # Pipeline GBDT -> submission/
+python scripts/test_tabular_fm.py --device cpu             # Benchmark TabICL vs CatBoost (CV)
+python scripts/ensemble_search.py --leakfree --submit      # Ensemble glouton validé en CV imbriquée
+python scripts/adversarial_validation.py                   # Shift train/test + validation proxy
 ```
 
-## 🧠 Méthodologie Détaillée
+Les données QRT sont à placer dans `data/` (non versionnées).
 
-### 1. Feature Engineering Avancé
-Le code dans `src/features.py` implémente une logique métier footballistique :
+## Structure
 
-*   **Agrégation Positionnelle** : Plutôt que de traiter les joueurs individuellement, nous les regroupons par ligne tactique (Gardiens, Défenseurs, Milieux, Attaquants). Nous calculons ainsi des métriques agrégées (ex: "Puissance offensive des attaquants à domicile").
-*   **Smart Matchups (Interactions)** : Création de variables de confrontation directe.
-    *   *Exemple* : `DUEL_ATT_H_GK_A` compare statistiquement les tirs des attaquants à domicile vs les arrêts du gardien extérieur.
-*   **Dominance Physique & Créative** : Calcul de deltas sur des métriques clés comme les duels aériens gagnés ou les passes clés réussies.
-*   **Métriques d'Efficacité (Ratios)** : Pour éviter le biais de volume (une équipe qui a beaucoup la balle tire plus mais n'est pas forcément dangereuse), nous calculons des ratios :
-    *   *Conversion Rate* : Buts / Tirs.
-    *   *Dangerosity* : Attaques Dangereuses / Attaques Totales.
-
-### 2. Stratégie de Sélection (Signal vs Bruit)
-Avec plus de 1500 features générées, le risque de sur-apprentissage (overfitting) est élevé. Le pipeline (`scripts/run_pipeline.py`) applique une double filtration :
-
-1.  **Filtre de Collinéarité** : Suppression des variables corrélées à plus de **95%** (Matrice de corrélation Pearson) pour réduire la redondance.
-2.  **Embedded Feature Selection** : Utilisation d'un modèle LightGBM rapide pour calculer l'importance des features ("Gain"). Nous ne conservons que le **Top-K (ex: 800)** variables les plus prédictives. Cela permet d'éliminer le bruit statistique qui perturbe l'apprentissage.
-
-### 3. Feature Stacking
-Nous utilisons une technique de **Stacking de Features** :
-*   Un modèle auxiliaire (CatBoost Regressor) est entraîné pour prédire non pas le résultat du match, mais la **différence de buts** (`GOAL_DIFF`).
-*   Cette prédiction (`PRED_GOAL_DIFF`) est réinjectée comme une "super-feature" dans le modèle principal. Elle agit comme un résumé dense de la dynamique de force entre les deux équipes.
-
-### 4. Modélisation
-L'architecture finale repose sur l'état de l'art en données tabulaires :
-*   **Modèles** : XGBoost, LightGBM et CatBoost.
-*   **Ensemble (Stacking)** : Une option permet de combiner ces trois modèles via une Régression Logistique (Meta-Learner) pour stabiliser la variance des prédictions.
-*   **Validation** : Validation Croisée Stratifiée (Stratified K-Fold) pour assurer que la distribution des classes (Victoire/Nul/Défaite) est respectée dans chaque pli de validation.
-
-## ⚙️ Installation & Utilisation
-
-1.  **Installation** :
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-2.  **Lancer le Pipeline** :
-    ```bash
-    python scripts/run_pipeline.py --model stack
-    ```
-    *Options de modèles : `lgb` (LightGBM), `xgb` (XGBoost), `cat` (CatBoost), `stack` (Ensemble).*
-
-3.  **Résultats** :
-    Les fichiers de soumission sont générés automatiquement dans `submission/` si le score de validation dépasse le seuil de qualité défini.
-
----
-*Projet réalisé pour le Data Challenge "Football : Qui va gagner ?" par QRT. Codé en Python sans génération automatique de code.*
+```
+src/          data.py (chargement) · features.py (feature engineering) · utils.py (logging des runs)
+scripts/      run_pipeline.py · test_tabular_fm.py · ensemble_search.py · adversarial_validation.py
+              optimize_*.py (Optuna : features, hyperparamètres, seuils)
+docs/         une fiche par méthode
+experiments/  config JSON + score + logs de chaque run
+```

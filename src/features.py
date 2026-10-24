@@ -146,6 +146,48 @@ def build_features(team_home, team_away, player_home, player_away):
     except Exception:
         pass
 
+    # -------------------------------------------------------------------------
+    # 🆕 NEW: MOMENTUM FEATURES (Short Term vs Long Term)
+    # -------------------------------------------------------------------------
+    # Compare "5_last_match_average" vs "season_average" to detect form
+    # If 5_last > season => Positive Momentum
+    
+    momentum_metrics = [
+        'TEAM_GOALS', 'TEAM_GAME_WON', 'TEAM_SHOTS_ON_TARGET', 
+        'TEAM_DANGEROUS_ATTACKS', 'TEAM_SUCCESSFUL_PASSES_PERCENTAGE',
+        'TEAM_CORNERS', 'TEAM_POSSESSION' # Some names might differ, check carefully
+    ]
+    
+    # Auto-detect existing metrics that have both suffixes
+    suffix_short = '5_last_match_average'
+    suffix_long = 'season_average'
+
+    print("--- Calculating Momentum (Short vs Long Term) ---")
+    
+    for col in team_home.columns:
+        # Check if this column is a "season_average" metric
+        if col.endswith(f"_{suffix_long}"):
+            metric_base = col.replace(f"_{suffix_long}", "")
+            
+            # Construct names for current dataframe (merged)
+            col_long_home = f"{metric_base}_{suffix_long}_HOME"
+            col_short_home = f"{metric_base}_{suffix_short}_HOME"
+            
+            col_long_away = f"{metric_base}_{suffix_long}_AWAY"
+            col_short_away = f"{metric_base}_{suffix_short}_AWAY"
+
+            # Check if short term version exists in df
+            if col_short_home in df.columns:
+                # HOME Momentum
+                df[f'MOMENTUM_{metric_base}_HOME'] = df[col_short_home] - df[col_long_home]
+                # Scaled Momentum (relative to season average)
+                # df[f'MOMENTUM_PCT_{metric_base}_HOME'] = _safe_div(df[col_short_home] - df[col_long_home], df[col_long_home])
+
+            if col_short_away in df.columns:
+                # AWAY Momentum
+                df[f'MOMENTUM_{metric_base}_AWAY'] = df[col_short_away] - df[col_long_away]
+
+
     # Smart Deltas (Physics & Creativity)
     try:
         # Duel Striker vs Goalkeeper
@@ -172,7 +214,7 @@ def build_features(team_home, team_away, player_home, player_away):
 
     # Classic Deltas (Home - Away)
     numeric_cols = df.select_dtypes(include=[np.number]).columns
-    base_features = set([c.replace('_HOME', '') for c in numeric_cols if '_HOME' in c])
+    base_features = sorted(list(set([c.replace('_HOME', '') for c in numeric_cols if '_HOME' in c])))
     for col in base_features:
         col_h, col_a = f"{col}_HOME", f"{col}_AWAY"
         if col_h in df.columns and col_a in df.columns: df[f'DELTA_{col}'] = df[col_h] - df[col_a]
